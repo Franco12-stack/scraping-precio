@@ -111,6 +111,17 @@ def obtener_cuentas(identificador_cliente: str):
     return {"total": len(cuentas), "cuentas": cuentas}
 
 
+@app.get("/tarjetas/{identificador_cliente}")
+def obtener_tarjetas(identificador_cliente: str):
+    """
+    Devuelve las tarjetas registradas para el cliente.
+    El cliente debe haber completado un pago con tarjeta previamente.
+    """
+    client = get_client()
+    tarjetas = client.obtener_tarjetas_cliente(identificador_cliente)
+    return {"total": len(tarjetas), "tarjetas": tarjetas}
+
+
 # --------------------------------------------------------------------------
 # Recurrencia — generar cobro
 # --------------------------------------------------------------------------

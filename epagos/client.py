@@ -19,6 +19,23 @@ MEDIO_DEBITO_DIRECTO = "op_pago_recurrente_medio_debito_directo"
 # Único valor válido de TipoOperacionRec
 TIPO_RECURRENTE = "op_pago_recurrente"
 
+# Códigos que devuelve respuesta_entidad_cobro cuando el débito es rechazado
+RECHAZO_ENTIDAD = {
+    "cc_rejected_blacklist":         "Tarjeta en lista negra",
+    "cc_rejected_card_disabled":     "Tarjeta deshabilitada",
+    "cc_rejected_bad_filled_date":   "Fecha de vencimiento incorrecta",
+    "cc_rejected_bad_filled_other":  "Datos incorrectos",
+    "cc_rejected_bad_filled_security_code": "Código de seguridad incorrecto",
+    "cc_rejected_call_for_authorize":"Requiere autorización telefónica",
+    "cc_rejected_card_error":        "Error de tarjeta",
+    "cc_rejected_duplicated_payment":"Pago duplicado",
+    "cc_rejected_high_risk":         "Rechazado por riesgo",
+    "cc_rejected_insufficient_amount":"Saldo insuficiente",
+    "cc_rejected_invalid_installments":"Cuotas inválidas",
+    "cc_rejected_max_attempts":      "Máximo de intentos alcanzado",
+    "cc_rejected_other_reason":      "Rechazado por otra razón",
+}
+
 
 class EpagosError(Exception):
     def __init__(self, id_resp: str, mensaje: str):
@@ -142,6 +159,20 @@ class EpagosClient:
                 cuentas.append(self._to_dict(cuenta))
         return cuentas
 
+    def obtener_tarjetas_cliente(self, identificador_cliente: str) -> list[dict]:
+        """Devuelve las tarjetas de crédito/débito registradas para un cliente."""
+        resp = self._soap.service.obtener_tarjetas_cliente(
+            API_VERSION,
+            self._creds_pago(),
+            [{"identificador_cliente": identificador_cliente, "identificador_tarjeta": ""}],
+        )
+        self._validar(resp.id_resp, resp.respuesta)
+        tarjetas = []
+        for t in (resp.tarjetas or []):
+            for tarjeta in (t.tarjetas or []):
+                tarjetas.append(self._to_dict(tarjeta))
+        return tarjetas
+
     # ------------------------------------------------------------------
     # Recurrencia — cobros por débito directo
     # ------------------------------------------------------------------
@@ -232,6 +263,8 @@ class EpagosClient:
         La acreditación demora hasta 72 hs hábiles.
         Requiere que el cliente ya tenga una cuenta CBU/CVU registrada en ePagos.
         """
+        if len(identificador_cliente) < 6:
+            raise ValueError("identificador_cliente debe tener al menos 6 caracteres")
         conv = convenio or self.convenio
         if not conv:
             raise ValueError("CONVENIO es obligatorio. Completá EPAGOS_CONVENIO en .env")
@@ -276,6 +309,8 @@ class EpagosClient:
         """
         Programa un cobro para una fecha futura (se ejecuta en background al vencer).
         """
+        if len(identificador_cliente) < 6:
+            raise ValueError("identificador_cliente debe tener al menos 6 caracteres")
         conv = convenio or self.convenio
         if not conv:
             raise ValueError("CONVENIO es obligatorio. Completá EPAGOS_CONVENIO en .env")
@@ -283,7 +318,8 @@ class EpagosClient:
         operacion   = self._build_operacion(numero_operacion, importe, descripcion,
                                             nombre_pagador, apellido_pagador,
                                             email_pagador, dni_pagador, cuit_pagador)
-        ArraySusc   = [{"fecha_cobro": fecha_cobro.strftime("%Y-%m-%d")}]
+        # DatosSuscripcion fields: fecha (date), monto (float)
+        ArraySusc   = [{"fecha": fecha_cobro, "monto": float(importe)}]
         SuscCliente = self._tipo("SuscripcionCliente")
         cliente_sus = SuscCliente(
             identificador_cliente = identificador_cliente,
