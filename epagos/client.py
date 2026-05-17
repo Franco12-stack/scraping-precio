@@ -1,45 +1,76 @@
 import os
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
-from zeep import Client
+from zeep import Client, Settings
 from zeep.transports import Transport
 from requests import Session
-from requests.auth import HTTPBasicAuth
 
-from .models import CuentaCliente, Rendicion, ResultadoPago
+WSDL_PRODUCCION = "https://api.epagos.com.ar/wsdl/index.php?wsdl"
+WSDL_SANDBOX    = "https://sandbox.epagos.com.ar/wsdl/index.php?wsdl"
 
-# Reemplazar con la URL real del WSDL provista por ePagos
-WSDL_URL = os.getenv("EPAGOS_WSDL_URL", "https://www.epagos.com.ar/api/wsdl")
+API_VERSION = "3.0"
+
+
+class EpagosError(Exception):
+    def __init__(self, id_resp: str, mensaje: str):
+        super().__init__(f"[{id_resp}] {mensaje}")
+        self.id_resp = id_resp
+        self.mensaje = mensaje
 
 
 class EpagosClient:
-    """Cliente SOAP para la API de ePagos."""
+    """
+    Cliente SOAP para la API ePagos v3.
+    Flujo: obtener_token() → usar token en llamadas posteriores.
+    """
 
     def __init__(
         self,
-        usuario: Optional[str] = None,
+        id_organismo: Optional[str] = None,
+        id_usuario: Optional[str] = None,
         password: Optional[str] = None,
-        organismo: Optional[str] = None,
-        wsdl_url: Optional[str] = None,
+        hash_auth: Optional[str] = None,
+        convenio: Optional[int] = None,
+        entorno: Optional[str] = None,
     ):
-        self.usuario = usuario or os.environ["EPAGOS_USUARIO"]
-        self.password = password or os.environ["EPAGOS_PASSWORD"]
-        self.organismo = organismo or os.environ["EPAGOS_ORGANISMO"]
-        self._wsdl = wsdl_url or WSDL_URL
-        self._client = self._build_client()
+        self.id_organismo = id_organismo or os.environ["EPAGOS_ID_ORGANISMO"]
+        self.id_usuario   = id_usuario   or os.environ["EPAGOS_ID_USUARIO"]
+        self.password     = password     or os.environ["EPAGOS_PASSWORD"]
+        self.hash_auth    = hash_auth    or os.environ["EPAGOS_HASH"]
+        self.convenio     = convenio     or int(os.environ["EPAGOS_CONVENIO"])
+        self.entorno      = (entorno or os.getenv("EPAGOS_ENTORNO", "sandbox")).lower()
 
-    def _build_client(self) -> Client:
-        session = Session()
-        session.auth = HTTPBasicAuth(self.usuario, self.password)
-        transport = Transport(session=session)
-        return Client(self._wsdl, transport=transport)
+        wsdl = WSDL_SANDBOX if self.entorno == "sandbox" else WSDL_PRODUCCION
+        settings = Settings(strict=False, xml_huge_tree=True)
+        self._soap = Client(wsdl, settings=settings, transport=Transport(session=Session()))
+        self._token: Optional[str] = None
 
-    def _credenciales(self) -> dict:
+    # ------------------------------------------------------------------
+    # Token
+    # ------------------------------------------------------------------
+
+    def obtener_token(self) -> str:
+        credenciales = {
+            "id_usuario":   self.id_usuario,
+            "id_organismo": self.id_organismo,
+            "password":     self.password,
+            "hash":         self.hash_auth,
+        }
+        resp = self._soap.service.obtener_token(API_VERSION, credenciales)
+        self._validar_respuesta(resp.id_resp, resp.respuesta)
+        self._token = str(resp.token)
+        return self._token
+
+    def _token_valido(self) -> str:
+        if not self._token:
+            self.obtener_token()
+        return self._token
+
+    def _credenciales_pago(self) -> dict:
         return {
-            "usuario": self.usuario,
-            "password": self.password,
-            "organismo": self.organismo,
+            "id_organismo": self.id_organismo,
+            "token":        self._token_valido(),
         }
 
     # ------------------------------------------------------------------
@@ -50,162 +81,161 @@ class EpagosClient:
         self,
         fecha_desde: date,
         fecha_hasta: date,
-        tipo_operacion: Optional[str] = None,
-    ) -> list[ResultadoPago]:
-        """Devuelve operaciones realizadas en el rango de fechas indicado."""
-        params = {
-            **self._credenciales(),
-            "fecha_desde": fecha_desde.isoformat(),
-            "fecha_hasta": fecha_hasta.isoformat(),
+        estado: str = "A",
+        pagina: int = 1,
+    ) -> list[dict]:
+        criterios = {
+            "Estado":                        estado,
+            "FechaNovedadAcreditacionDesde": fecha_desde.strftime("%Y-%m-%d"),
+            "FechaNovedadAcreditacionHasta": fecha_hasta.strftime("%Y-%m-%d"),
+            "pagina":                        pagina,
         }
-        if tipo_operacion:
-            params["tipo_operacion"] = tipo_operacion
-
-        respuesta = self._client.service.obtener_pagos(**params)
-        return [self._parsear_pago(item) for item in (respuesta or [])]
-
-    def obtener_rendiciones(self, fecha: date) -> list[Rendicion]:
-        """Devuelve la rendición diaria de la fecha indicada."""
-        params = {
-            **self._credenciales(),
-            "fecha": fecha.isoformat(),
-        }
-        respuesta = self._client.service.obtener_rendiciones(**params)
-        return [self._parsear_rendicion(item) for item in (respuesta or [])]
-
-    # ------------------------------------------------------------------
-    # Recurrencia — gestión de cuentas
-    # ------------------------------------------------------------------
-
-    def registrar_cuenta_cliente(
-        self,
-        cbu: str,
-        identificador_cliente: str,
-        tipo_operacion: str,
-    ) -> CuentaCliente:
-        """Migra/registra una cuenta bancaria para cobro recurrente."""
-        params = {
-            **self._credenciales(),
-            "cbu": cbu,
-            "identificador_cliente": identificador_cliente,
-            "tipo_operacion": tipo_operacion,
-        }
-        respuesta = self._client.service.registrar_cuentas_cliente(**params)
-        return CuentaCliente(
-            identificador_cuenta=respuesta.identificador_cuenta,
-            identificador_cliente=identificador_cliente,
-            cbu=cbu,
-            tipo_operacion=tipo_operacion,
+        resp = self._soap.service.obtener_pagos(
+            API_VERSION, self._credenciales_pago(), criterios
         )
+        self._validar_respuesta(resp.id_resp, resp.respuesta)
+        pagos = resp.pago or []
+        return [self._zeep_a_dict(p) for p in pagos]
+
+    def obtener_rendiciones(
+        self,
+        fecha_desde: date,
+        fecha_hasta: date,
+    ) -> list[dict]:
+        criterios = {
+            "Fecha_desde": fecha_desde.strftime("%Y-%m-%d"),
+            "Fecha_hasta": fecha_hasta.strftime("%Y-%m-%d"),
+        }
+        resp = self._soap.service.obtener_rendiciones(
+            API_VERSION, self._credenciales_pago(), criterios
+        )
+        self._validar_respuesta(resp.id_resp, resp.respuesta)
+        rendiciones = resp.rendicion or []
+        return [self._zeep_a_dict(r) for r in rendiciones]
+
+    # ------------------------------------------------------------------
+    # Recurrencia — gestión de cuentas bancarias (CBU/CVU)
+    # ------------------------------------------------------------------
 
     def obtener_cuentas_cliente(
-        self, identificador_cliente: str
-    ) -> list[CuentaCliente]:
-        """Devuelve las cuentas bancarias guardadas para un cliente."""
-        params = {
-            **self._credenciales(),
+        self,
+        identificador_cliente: str,
+        tipo_operacion: Optional[str] = None,
+    ) -> list[dict]:
+        datos_cliente = {
             "identificador_cliente": identificador_cliente,
         }
-        respuesta = self._client.service.obtener_cuentas_cliente(**params)
-        return [
-            CuentaCliente(
-                identificador_cuenta=c.identificador_cuenta,
-                identificador_cliente=identificador_cliente,
-                cbu=c.cbu,
-                tipo_operacion=c.tipo_operacion,
-                activa=getattr(c, "activa", True),
-            )
-            for c in (respuesta or [])
-        ]
+        if tipo_operacion:
+            datos_cliente["tipo_operacion"] = tipo_operacion
+
+        resp = self._soap.service.obtener_cuentas_cliente(
+            API_VERSION, self._credenciales_pago(), [datos_cliente]
+        )
+        self._validar_respuesta(resp.id_resp, resp.respuesta)
+        cuentas = resp.cuentas or []
+        return [self._zeep_a_dict(c) for c in cuentas]
 
     # ------------------------------------------------------------------
-    # Recurrencia — cobros
+    # Recurrencia — cobros por débito directo
     # ------------------------------------------------------------------
 
     def solicitud_pago_recurrente(
         self,
+        tipo_operacion: str,
         identificador_cliente: str,
         identificador_cuenta: str,
         importe: float,
-        tipo_operacion: str,
-        descripcion: Optional[str] = None,
-        referencia_externa: Optional[str] = None,
-    ) -> ResultadoPago:
+        numero_operacion: str,
+        descripcion: str = "",
+        medio: str = "CUENTA",   # "CUENTA" = débito directo / "TARJETA" = tarjeta guardada
+    ) -> dict:
         """
         Genera una orden de cobro por débito directo.
         La acreditación demora hasta 72 hs hábiles.
         """
-        params = {
-            **self._credenciales(),
-            "identificador_cliente": identificador_cliente,
-            "identificador_cuenta": identificador_cuenta,
-            "importe": importe,
-            "tipo_operacion": tipo_operacion,
+        operacion = {
+            "monto":            importe,
+            "numero_operacion": numero_operacion,
+            "id_moneda":        1,   # 1 = ARS
         }
-        if descripcion:
-            params["descripcion"] = descripcion
-        if referencia_externa:
-            params["referencia_externa"] = referencia_externa
-
-        respuesta = self._client.service.solicitud_pago_recurrente(**params)
-        return self._parsear_pago(respuesta)
+        cliente = {
+            "identificador_cliente": identificador_cliente,
+            "identificador_cuenta":  identificador_cuenta,
+        }
+        resp = self._soap.service.solicitud_pago_recurrente(
+            API_VERSION,
+            tipo_operacion,
+            self._credenciales_pago(),
+            operacion,
+            self.convenio,
+            medio,
+            cliente,
+        )
+        self._validar_respuesta(resp.id_resp, resp.respuesta)
+        return {
+            "id_transaccion":  resp.id_transaccion,
+            "numero_operacion": resp.numero_operacion,
+            "token":           resp.token,
+        }
 
     def solicitud_pago_recurrente_suscripcion(
         self,
+        tipo_operacion: str,
         identificador_cliente: str,
         identificador_cuenta: str,
         importe: float,
-        tipo_operacion: str,
+        numero_operacion: str,
         fecha_cobro: date,
-        descripcion: Optional[str] = None,
-        referencia_externa: Optional[str] = None,
-    ) -> ResultadoPago:
+        descripcion: str = "",
+        modalidad: str = "U",   # "U" = única, "P" = periódica
+        medio: str = "CUENTA",
+    ) -> dict:
         """
-        Programa un cobro planificado que se ejecuta al llegar la fecha indicada.
+        Programa un cobro para una fecha futura (se ejecuta en background al llegar la fecha).
         """
-        params = {
-            **self._credenciales(),
-            "identificador_cliente": identificador_cliente,
-            "identificador_cuenta": identificador_cuenta,
-            "importe": importe,
-            "tipo_operacion": tipo_operacion,
-            "fecha_cobro": fecha_cobro.isoformat(),
+        operacion = {
+            "monto":            importe,
+            "numero_operacion": numero_operacion,
+            "id_moneda":        1,
         }
-        if descripcion:
-            params["descripcion"] = descripcion
-        if referencia_externa:
-            params["referencia_externa"] = referencia_externa
-
-        respuesta = self._client.service.solicitud_pago_recurrente_suscripcion(**params)
-        return self._parsear_pago(respuesta)
+        suscripcion = [{
+            "fecha_cobro": fecha_cobro.strftime("%Y-%m-%d"),
+        }]
+        cliente = [{
+            "identificador_cliente": identificador_cliente,
+            "identificador_cuenta":  identificador_cuenta,
+        }]
+        resp = self._soap.service.solicitud_pago_recurrente_suscripcion(
+            API_VERSION,
+            tipo_operacion,
+            self._credenciales_pago(),
+            operacion,
+            suscripcion,
+            modalidad,
+            descripcion,
+            self.convenio,
+            medio,
+            cliente,
+        )
+        self._validar_respuesta(resp.id_resp, resp.respuesta)
+        return {"id_resp": resp.id_resp, "respuesta": resp.respuesta}
 
     # ------------------------------------------------------------------
-    # Helpers de parseo
+    # Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parsear_pago(item) -> ResultadoPago:
-        return ResultadoPago(
-            id_operacion=str(item.id_operacion),
-            estado=str(item.estado),
-            importe=float(item.importe),
-            moneda=str(getattr(item, "moneda", "ARS")),
-            identificador_cliente=str(getattr(item, "identificador_cliente", "")),
-            tipo_operacion=str(getattr(item, "tipo_operacion", "")),
-            fecha=datetime.fromisoformat(str(item.fecha)),
-            medio_pago=str(getattr(item, "medio_pago", "") or ""),
-            descripcion=str(getattr(item, "descripcion", "") or ""),
-        )
+    def _validar_respuesta(id_resp: Any, respuesta: Any) -> None:
+        id_str = str(id_resp)
+        if id_str != "0":
+            raise EpagosError(id_str, str(respuesta))
 
     @staticmethod
-    def _parsear_rendicion(item) -> Rendicion:
-        return Rendicion(
-            id_operacion=str(item.id_operacion),
-            fecha_acreditacion=datetime.fromisoformat(str(item.fecha_acreditacion)),
-            importe=float(item.importe),
-            moneda=str(getattr(item, "moneda", "ARS")),
-            identificador_cliente=str(getattr(item, "identificador_cliente", "")),
-            tipo_operacion=str(getattr(item, "tipo_operacion", "")),
-            medio_pago=str(getattr(item, "medio_pago", "")),
-            comision=float(getattr(item, "comision", 0.0)),
-        )
+    def _zeep_a_dict(obj: Any) -> dict:
+        if hasattr(obj, "__values__"):
+            return {k: EpagosClient._zeep_a_dict(v) for k, v in obj.__values__.items()}
+        if isinstance(obj, list):
+            return [EpagosClient._zeep_a_dict(i) for i in obj]
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return obj

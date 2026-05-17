@@ -1,8 +1,8 @@
 """
-Servidor FastAPI para recibir webhooks de ePagos y exponer endpoints de cobro.
+Servidor FastAPI — integración ePagos.
 
 Iniciar:
-    uvicorn app:app --host 0.0.0.0 --port 8000
+    uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 """
 
 import logging
@@ -10,10 +10,10 @@ import os
 from datetime import date, datetime
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Request, status
 from pydantic import BaseModel, Field
 
-from epagos import EpagosClient, PagoEvento
+from epagos import EpagosClient, EpagosError, PagoEvento
 
 load_dotenv()
 
@@ -28,7 +28,7 @@ def get_client() -> EpagosClient:
 
 
 # --------------------------------------------------------------------------
-# Webhook — ePagos llama a este endpoint cuando acredita/devuelve un pago
+# Webhook — ePagos notifica cada pago/devolución en tiempo real
 # --------------------------------------------------------------------------
 
 class WebhookPayload(BaseModel):
@@ -47,13 +47,10 @@ class WebhookPayload(BaseModel):
 @app.post("/webhook", status_code=status.HTTP_200_OK)
 async def recibir_webhook(request: Request, payload: WebhookPayload):
     log.info(
-        "Webhook recibido: op=%s estado=%s importe=%s cliente=%s",
-        payload.id_operacion,
-        payload.estado,
-        payload.importe,
-        payload.identificador_cliente,
+        "Webhook op=%s estado=%s importe=%s cliente=%s",
+        payload.id_operacion, payload.estado,
+        payload.importe, payload.identificador_cliente,
     )
-
     evento = PagoEvento(
         id_operacion=payload.id_operacion,
         estado=payload.estado,
@@ -65,21 +62,19 @@ async def recibir_webhook(request: Request, payload: WebhookPayload):
         medio_pago=payload.medio_pago,
         datos_extra=payload.model_extra or {},
     )
-
     await procesar_evento(evento)
     return {"recibido": True}
 
 
 async def procesar_evento(evento: PagoEvento) -> None:
-    """Lógica de negocio al recibir un evento de ePagos."""
     if evento.estado == "acreditado":
-        log.info("Pago acreditado: op=%s cliente=%s", evento.id_operacion, evento.identificador_cliente)
+        log.info("Pago acreditado op=%s cliente=%s", evento.id_operacion, evento.identificador_cliente)
         # TODO: marcar la deuda como paga en tu sistema
     elif evento.estado == "devuelto":
-        log.info("Devolución registrada: op=%s", evento.id_operacion)
+        log.info("Devolución op=%s", evento.id_operacion)
         # TODO: revertir el pago en tu sistema
     else:
-        log.warning("Estado desconocido: %s — op=%s", evento.estado, evento.id_operacion)
+        log.warning("Estado desconocido '%s' op=%s", evento.estado, evento.id_operacion)
 
 
 # --------------------------------------------------------------------------
@@ -87,49 +82,28 @@ async def procesar_evento(evento: PagoEvento) -> None:
 # --------------------------------------------------------------------------
 
 @app.get("/pagos")
-def listar_pagos(
-    fecha_desde: date,
-    fecha_hasta: date,
-    tipo_operacion: str | None = None,
-):
+def listar_pagos(fecha_desde: date, fecha_hasta: date, estado: str = "A"):
     client = get_client()
-    pagos = client.obtener_pagos(fecha_desde, fecha_hasta, tipo_operacion)
-    return {"total": len(pagos), "pagos": [vars(p) for p in pagos]}
+    pagos = client.obtener_pagos(fecha_desde, fecha_hasta, estado)
+    return {"total": len(pagos), "pagos": pagos}
 
 
-@app.get("/rendiciones/{fecha}")
-def listar_rendicion(fecha: date):
+@app.get("/rendiciones")
+def listar_rendiciones(fecha_desde: date, fecha_hasta: date):
     client = get_client()
-    rendiciones = client.obtener_rendiciones(fecha)
-    return {"total": len(rendiciones), "rendiciones": [vars(r) for r in rendiciones]}
+    rendiciones = client.obtener_rendiciones(fecha_desde, fecha_hasta)
+    return {"total": len(rendiciones), "rendiciones": rendiciones}
 
 
 # --------------------------------------------------------------------------
-# Recurrencia — cuentas
+# Recurrencia — cuentas bancarias del cliente
 # --------------------------------------------------------------------------
-
-class RegistrarCuentaBody(BaseModel):
-    cbu: str
-    identificador_cliente: str
-    tipo_operacion: str
-
-
-@app.post("/cuentas")
-def registrar_cuenta(body: RegistrarCuentaBody):
-    client = get_client()
-    cuenta = client.registrar_cuenta_cliente(
-        cbu=body.cbu,
-        identificador_cliente=body.identificador_cliente,
-        tipo_operacion=body.tipo_operacion,
-    )
-    return vars(cuenta)
-
 
 @app.get("/cuentas/{identificador_cliente}")
-def obtener_cuentas(identificador_cliente: str):
+def obtener_cuentas(identificador_cliente: str, tipo_operacion: str | None = None):
     client = get_client()
-    cuentas = client.obtener_cuentas_cliente(identificador_cliente)
-    return {"total": len(cuentas), "cuentas": [vars(c) for c in cuentas]}
+    cuentas = client.obtener_cuentas_cliente(identificador_cliente, tipo_operacion)
+    return {"total": len(cuentas), "cuentas": cuentas}
 
 
 # --------------------------------------------------------------------------
@@ -137,45 +111,50 @@ def obtener_cuentas(identificador_cliente: str):
 # --------------------------------------------------------------------------
 
 class PagoRecurrenteBody(BaseModel):
+    tipo_operacion: str
     identificador_cliente: str
     identificador_cuenta: str
     importe: float = Field(gt=0)
-    tipo_operacion: str
-    descripcion: str | None = None
-    referencia_externa: str | None = None
+    numero_operacion: str
+    descripcion: str = ""
+    medio: str = "CUENTA"
 
 
 @app.post("/cobros/recurrente")
 def cobro_recurrente(body: PagoRecurrenteBody):
     client = get_client()
     resultado = client.solicitud_pago_recurrente(
+        tipo_operacion=body.tipo_operacion,
         identificador_cliente=body.identificador_cliente,
         identificador_cuenta=body.identificador_cuenta,
         importe=body.importe,
-        tipo_operacion=body.tipo_operacion,
+        numero_operacion=body.numero_operacion,
         descripcion=body.descripcion,
-        referencia_externa=body.referencia_externa,
+        medio=body.medio,
     )
-    return vars(resultado)
+    return resultado
 
 
 class PagoSuscripcionBody(PagoRecurrenteBody):
     fecha_cobro: date
+    modalidad: str = "U"
 
 
 @app.post("/cobros/suscripcion")
 def cobro_suscripcion(body: PagoSuscripcionBody):
     client = get_client()
     resultado = client.solicitud_pago_recurrente_suscripcion(
+        tipo_operacion=body.tipo_operacion,
         identificador_cliente=body.identificador_cliente,
         identificador_cuenta=body.identificador_cuenta,
         importe=body.importe,
-        tipo_operacion=body.tipo_operacion,
+        numero_operacion=body.numero_operacion,
         fecha_cobro=body.fecha_cobro,
         descripcion=body.descripcion,
-        referencia_externa=body.referencia_externa,
+        modalidad=body.modalidad,
+        medio=body.medio,
     )
-    return vars(resultado)
+    return resultado
 
 
 # --------------------------------------------------------------------------
@@ -184,4 +163,4 @@ def cobro_suscripcion(body: PagoSuscripcionBody):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "entorno": os.getenv("EPAGOS_ENTORNO", "sandbox")}
