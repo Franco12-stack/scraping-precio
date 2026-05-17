@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ePagos Dashboard — Preview</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<style>
+  :root { --sidebar-bg: #1a2340; --sidebar-w: 230px; }
+  body { background: #f0f2f5; font-size: 14px; }
+  /* Login */
+  .login-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; background: linear-gradient(135deg,#1a2340 0%,#2d3f6e 100%); }
+  .login-card { width:380px; background:#fff; border-radius:18px; padding:40px; box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  /* Layout */
+  .sidebar { position:fixed; top:0; left:0; bottom:0; width:var(--sidebar-w); background:var(--sidebar-bg); padding:24px 16px; display:flex; flex-direction:column; z-index:100; }
+  .sidebar .brand { color:#fff; font-weight:700; font-size:1.15rem; margin-bottom:32px; padding-left:8px; }
+  .sidebar .nav-link { color:#8899bb; border-radius:8px; padding:9px 12px; display:flex; align-items:center; gap:10px; font-size:.9rem; cursor:pointer; transition:.15s; }
+  .sidebar .nav-link:hover, .sidebar .nav-link.active { background:rgba(255,255,255,.1); color:#fff; }
+  .sidebar .nav-link i { font-size:1rem; }
+  .sidebar .logout { color:#e57373 !important; margin-top:auto; }
+  .main { margin-left:var(--sidebar-w); padding:28px 32px; min-height:100vh; }
+  /* Cards */
+  .stat-card { background:#fff; border-radius:14px; padding:20px 24px; box-shadow:0 2px 12px rgba(0,0,0,.06); border:none; }
+  .stat-icon { font-size:2rem; opacity:.18; }
+  .card-panel { background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,.06); overflow:hidden; }
+  .card-panel .cp-header { padding:14px 20px; font-weight:600; border-bottom:1px solid #f0f0f0; display:flex; justify-content:space-between; align-items:center; }
+  .card-panel .cp-body { padding:0; }
+  /* Badges estado */
+  .est-acreditado  { background:#d1fae5; color:#065f46; }
+  .est-pendiente   { background:#fef3c7; color:#92400e; }
+  .est-programado  { background:#dbeafe; color:#1e40af; }
+  .est-error       { background:#fee2e2; color:#991b1b; }
+  .est-enviado     { background:#f3f4f6; color:#374151; }
+  .est-devuelto    { background:#ffedd5; color:#9a3412; }
+  .badge-est { font-size:.72rem; padding:3px 9px; border-radius:20px; font-weight:600; text-transform:capitalize; display:inline-block; }
+  /* Table */
+  table th { font-size:.78rem; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; }
+  table td { font-size:.86rem; vertical-align:middle; }
+  .table-hover tbody tr:hover { background:#f8fafc; }
+  /* Form panel */
+  .form-panel { background:#fff; border-radius:14px; border:2px solid #3b82f6; padding:24px; margin-bottom:24px; box-shadow:0 4px 20px rgba(59,130,246,.12); }
+  .cobro-panel { border-color:#10b981; box-shadow:0 4px 20px rgba(16,185,129,.12); }
+  /* Toast */
+  .toast-area { position:fixed; bottom:24px; right:24px; z-index:9999; display:flex; flex-direction:column; gap:8px; }
+  .toast-item { background:#1a2340; color:#fff; padding:12px 20px; border-radius:10px; font-size:.87rem; box-shadow:0 4px 20px rgba(0,0,0,.2); display:flex; align-items:center; gap:10px; animation:slideIn .3s ease; min-width:260px; }
+  .toast-item.success { border-left:4px solid #10b981; }
+  .toast-item.error   { border-left:4px solid #ef4444; }
+  @keyframes slideIn { from{transform:translateX(40px);opacity:0} to{transform:translateX(0);opacity:1} }
+  /* Search */
+  .search-box { position:relative; }
+  .search-box i { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#9ca3af; }
+  .search-box input { padding-left:36px; }
+  /* Expander */
+  .client-row { border-bottom:1px solid #f3f4f6; }
+  .client-row:last-child { border-bottom:none; }
+  .client-header { padding:14px 20px; display:flex; align-items:center; justify-content:space-between; cursor:pointer; transition:.15s; }
+  .client-header:hover { background:#f8fafc; }
+  .client-body { padding:20px; background:#f9fafb; border-top:1px solid #f0f0f0; }
+  /* Spinner */
+  .spinner-sm { width:.9rem; height:.9rem; border-width:2px; }
+  [x-cloak] { display:none !important; }
+  /* Filter pills */
+  .filter-pill { border-radius:20px; padding:4px 14px; font-size:.8rem; font-weight:600; cursor:pointer; border:2px solid transparent; transition:.15s; }
+  .filter-pill.active-all      { background:#1a2340; color:#fff; }
+  .filter-pill.active-acreditado { background:#d1fae5; color:#065f46; border-color:#10b981; }
+  .filter-pill.active-pendiente  { background:#fef3c7; color:#92400e; border-color:#f59e0b; }
+  .filter-pill.active-programado { background:#dbeafe; color:#1e40af; border-color:#3b82f6; }
+  .filter-pill.active-error      { background:#fee2e2; color:#991b1b; border-color:#ef4444; }
+  .filter-pill.inactive { background:#fff; color:#6b7280; border-color:#e5e7eb; }
+  .filter-pill:hover { opacity:.85; }
+</style>
+</head>
+<body x-data="app()" x-init="init()">
+
+<!-- ═══════════════════════ LOGIN ═══════════════════════ -->
+<div class="login-wrap" x-show="!loggedIn" x-cloak>
+  <div class="login-card">
+    <div class="text-center mb-4">
+      <div style="font-size:2.8rem">⚡</div>
+      <h4 class="fw-bold mt-2 mb-0">ePagos Dashboard</h4>
+      <small class="text-muted">Cobros recurrentes · Sandbox</small>
+    </div>
+    <div x-show="loginError" class="alert alert-danger py-2 small mb-3" x-text="loginError"></div>
+    <form @submit.prevent="login()">
+      <div class="mb-3">
+        <label class="form-label fw-semibold small">Usuario</label>
+        <input x-model="loginUser" class="form-control" placeholder="admin" autofocus>
+      </div>
+      <div class="mb-4">
+        <label class="form-label fw-semibold small">Contraseña</label>
+        <input x-model="loginPass" type="password" class="form-control" placeholder="••••••••">
+      </div>
+      <button class="btn btn-primary w-100 py-2 fw-semibold">Ingresar</button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════ APP ═══════════════════════ -->
+<div x-show="loggedIn" x-cloak>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="brand"><i class="bi bi-lightning-charge-fill text-warning"></i> ePagos</div>
+    <nav class="d-flex flex-column gap-1">
+      <div class="nav-link" :class="{active: page==='dashboard'}" @click="page='dashboard'">
+        <i class="bi bi-speedometer2"></i> Dashboard
+      </div>
+      <div class="nav-link" :class="{active: page==='clientes'}" @click="page='clientes'">
+        <i class="bi bi-people-fill"></i> Clientes / CBU
+      </div>
+      <div class="nav-link" :class="{active: page==='cobros'}" @click="page='cobros'">
+        <i class="bi bi-receipt"></i> Historial cobros
+      </div>
+    </nav>
+    <div class="nav-link logout mt-auto" @click="logout()">
+      <i class="bi bi-box-arrow-right"></i> Salir
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- ── DASHBOARD ── -->
+    <div x-show="page==='dashboard'">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4 class="fw-bold mb-0">Panel principal</h4>
+        <span class="badge bg-warning text-dark">Sandbox activo</span>
+      </div>
+
+      <!-- Stats -->
+      <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-xl-3">
+          <div class="stat-card d-flex justify-content-between align-items-start">
+            <div>
+              <div class="text-muted small mb-1">Clientes</div>
+              <div class="fs-2 fw-bold" x-text="clientes.length"></div>
+              <a href="#" class="small text-primary" @click.prevent="page='clientes'">Ver todos →</a>
+            </div>
+            <i class="bi bi-people-fill stat-icon text-primary"></i>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="stat-card d-flex justify-content-between align-items-start">
+            <div>
+              <div class="text-muted small mb-1">CBU registrados</div>
+              <div class="fs-2 fw-bold" x-text="clientes.reduce((a,c)=>a+c.cuentas.length,0)"></div>
+              <span class="small text-muted">Cuentas activas</span>
+            </div>
+            <i class="bi bi-bank stat-icon text-success"></i>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="stat-card d-flex justify-content-between align-items-start">
+            <div>
+              <div class="text-muted small mb-1">Cobros generados</div>
+              <div class="fs-2 fw-bold" x-text="cobros.length"></div>
+              <a href="#" class="small text-primary" @click.prevent="page='cobros'">Ver historial →</a>
+            </div>
+            <i class="bi bi-receipt stat-icon text-warning"></i>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="stat-card d-flex justify-content-between align-items-start">
+            <div>
+              <div class="text-muted small mb-1">Monto acreditado</div>
+              <div class="fs-2 fw-bold">$ <span x-text="fmtMonto(cobros.filter(c=>c.estado==='acreditado').reduce((a,c)=>a+c.importe,0))"></span></div>
+              <span class="small text-muted">ARS total</span>
+            </div>
+            <i class="bi bi-cash-coin stat-icon text-danger"></i>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts row -->
+      <div class="row g-3 mb-4">
+        <div class="col-lg-8">
+          <div class="card-panel">
+            <div class="cp-header">Cobros por mes (últimos 6 meses)</div>
+            <div class="cp-body p-3">
+              <canvas id="chartMeses" height="110"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-4">
+          <div class="card-panel h-100">
+            <div class="cp-header">Por estado</div>
+            <div class="cp-body p-3">
+              <canvas id="chartEstado" height="175"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Últimos cobros -->
+      <div class="card-panel">
+        <div class="cp-header">
+          <span>Últimos cobros</span>
+          <span class="badge bg-secondary rounded-pill" x-text="cobros.length"></span>
+        </div>
+        <div class="cp-body">
+          <table class="table table-hover mb-0">
+            <thead class="table-light"><tr>
+              <th class="ps-3">Fecha</th><th>Cliente</th><th>Importe</th><th>Tipo</th><th>Estado</th><th>N° Operación</th>
+            </tr></thead>
+            <tbody>
+              <template x-for="c in cobros.slice(0,8)" :key="c.id">
+                <tr>
+                  <td class="ps-3 text-muted" x-text="c.fecha"></td>
+                  <td class="fw-semibold" x-text="c.cliente"></td>
+                  <td class="fw-semibold">$ <span x-text="fmtMonto(c.importe)"></span></td>
+                  <td><span class="badge bg-secondary" x-text="c.tipo"></span></td>
+                  <td><span class="badge-est" :class="'est-'+c.estado" x-text="c.estado"></span></td>
+                  <td class="font-monospace text-muted small" x-text="c.nop"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CLIENTES ── -->
+    <div x-show="page==='clientes'">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4 class="fw-bold mb-0"><i class="bi bi-people-fill me-2"></i>Clientes / CBU</h4>
+        <button class="btn btn-primary" @click="mostrarFormCliente=!mostrarFormCliente">
+          <i class="bi bi-plus-lg me-1"></i>Nuevo cliente
+        </button>
+      </div>
+
+      <!-- Form nuevo cliente -->
+      <div x-show="mostrarFormCliente" x-transition class="form-panel mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h6 class="fw-bold mb-0"><i class="bi bi-person-plus-fill me-2 text-primary"></i>Nuevo cliente</h6>
+          <button class="btn-close" @click="mostrarFormCliente=false"></button>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6"><label class="form-label small fw-semibold">Nombre</label>
+            <input x-model="formCli.nombre" class="form-control" placeholder="Juan"></div>
+          <div class="col-md-6"><label class="form-label small fw-semibold">Apellido</label>
+            <input x-model="formCli.apellido" class="form-control" placeholder="García"></div>
+          <div class="col-12"><label class="form-label small fw-semibold">Email</label>
+            <input x-model="formCli.email" type="email" class="form-control" placeholder="juan@email.com"></div>
+          <div class="col-md-6"><label class="form-label small fw-semibold">DNI</label>
+            <input x-model="formCli.dni" type="number" class="form-control" placeholder="30123456"></div>
+          <div class="col-md-6"><label class="form-label small fw-semibold">CUIT</label>
+            <input x-model="formCli.cuit" class="form-control" placeholder="20301234567"></div>
+          <div class="col-12"><label class="form-label small fw-semibold">Identificador ePagos <span class="text-muted fw-normal">(mín. 6 chars)</span></label>
+            <input x-model="formCli.id_ep" class="form-control font-monospace" placeholder="FCT-30123456"></div>
+        </div>
+        <div class="mt-3 d-flex gap-2 justify-content-end">
+          <button class="btn btn-secondary btn-sm" @click="mostrarFormCliente=false">Cancelar</button>
+          <button class="btn btn-primary btn-sm" @click="agregarCliente()"><i class="bi bi-check-lg me-1"></i>Guardar cliente</button>
+        </div>
+      </div>
+
+      <!-- Buscador -->
+      <div class="search-box mb-3">
+        <i class="bi bi-search"></i>
+        <input type="search" x-model="busqCli" class="form-control" placeholder="Buscar por nombre, apellido, email o ID ePagos…">
+        <span class="position-absolute end-0 top-50 translate-middle-y pe-3 text-muted small" x-text="clientesFiltrados.length + ' resultado(s)'"></span>
+      </div>
+
+      <!-- Lista clientes -->
+      <div class="card-panel">
+        <template x-if="clientesFiltrados.length===0">
+          <div class="text-center text-muted py-5">
+            <i class="bi bi-people fs-1 opacity-25 d-block mb-2"></i>
+            <span x-show="busqCli">Sin resultados para "<strong x-text="busqCli"></strong>"</span>
+            <span x-show="!busqCli">No hay clientes todavía</span>
+          </div>
+        </template>
+        <template x-for="cl in clientesFiltrados" :key="cl.id">
+          <div class="client-row">
+            <div class="client-header" @click="cl._open=!cl._open">
+              <div class="d-flex align-items-center gap-3">
+                <i class="bi" :class="cl._open ? 'bi-chevron-down text-primary' : 'bi-chevron-right text-muted'"></i>
+                <div>
+                  <span class="fw-semibold" x-text="cl.apellido+', '+cl.nombre"></span>
+                  <span class="text-muted ms-2 small font-monospace" x-text="cl.id_ep"></span>
+                </div>
+              </div>
+              <div class="d-flex align-items-center gap-3">
+                <span class="badge bg-primary rounded-pill" x-text="cl.cuentas.length+' CBU'"></span>
+                <span class="text-success fw-semibold small">$ <span x-text="fmtMonto(cobros.filter(c=>c.cliente_id===cl.id&&c.estado==='acreditado').reduce((a,c)=>a+c.importe,0))"></span></span>
+              </div>
+            </div>
+            <div class="client-body" x-show="cl._open" x-transition>
+              <div class="row g-3">
+                <div class="col-md-7">
+                  <p class="small text-muted mb-2"><i class="bi bi-envelope me-1"></i><span x-text="cl.email"></span> &nbsp;·&nbsp; DNI <span x-text="cl.dni"></span></p>
+
+                  <!-- Cuentas CBU -->
+                  <div class="fw-semibold small mb-2">Cuentas CBU/CVU:</div>
+                  <template x-if="cl.cuentas.length===0">
+                    <div class="alert alert-warning py-2 small">Sin CBU — sincronizá desde ePagos primero</div>
+                  </template>
+                  <template x-for="ct in cl.cuentas" :key="ct.id">
+                    <div class="d-flex align-items-center gap-2 mb-1 p-2 bg-white rounded border small font-monospace">
+                      <i class="bi bi-bank text-muted"></i>
+                      <span x-text="ct.id_cuenta"></span>
+                      <span class="text-muted" x-text="ct.alias ? '('+ct.alias+')' : ''"></span>
+                    </div>
+                  </template>
+
+                  <!-- Cobros del cliente -->
+                  <div class="fw-semibold small mt-3 mb-2">Cobros:</div>
+                  <template x-if="cobros.filter(c=>c.cliente_id===cl.id).length===0">
+                    <div class="text-muted small">Sin cobros todavía</div>
+                  </template>
+                  <table x-show="cobros.filter(c=>c.cliente_id===cl.id).length>0" class="table table-sm mb-0 bg-white rounded">
+                    <thead class="table-light"><tr><th>Fecha</th><th>Importe</th><th>Estado</th><th>N° Op</th></tr></thead>
+                    <tbody>
+                      <template x-for="co in cobros.filter(c=>c.cliente_id===cl.id)" :key="co.id">
+                        <tr>
+                          <td x-text="co.fecha"></td>
+                          <td>$ <span x-text="fmtMonto(co.importe)"></span></td>
+                          <td><span class="badge-est" :class="'est-'+co.estado" x-text="co.estado"></span></td>
+                          <td class="font-monospace" x-text="co.nop"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="col-md-5">
+                  <!-- Sincronizar CBU -->
+                  <button class="btn btn-outline-primary btn-sm w-100 mb-3" @click="sincronizarCBU(cl)">
+                    <i class="bi bi-arrow-repeat me-1"></i>Sincronizar CBU desde ePagos
+                  </button>
+
+                  <!-- Formulario cobro -->
+                  <div class="card-panel cobro-panel p-3">
+                    <div class="fw-semibold small mb-3 text-success"><i class="bi bi-cash-coin me-1"></i>Generar cobro</div>
+                    <template x-if="cl.cuentas.length===0">
+                      <div class="text-muted small">Sincronizá el CBU primero</div>
+                    </template>
+                    <template x-if="cl.cuentas.length>0">
+                      <div>
+                        <label class="form-label small fw-semibold">Cuenta CBU</label>
+                        <select x-model="cl._cobro_cuenta" class="form-select form-select-sm mb-2">
+                          <option value="">— Seleccioná —</option>
+                          <template x-for="ct in cl.cuentas" :key="ct.id">
+                            <option :value="ct.id" x-text="ct.id_cuenta+(ct.alias?' ('+ct.alias+')':'')"></option>
+                          </template>
+                        </select>
+                        <label class="form-label small fw-semibold">Importe (ARS)</label>
+                        <input x-model="cl._cobro_importe" type="number" min="1" step="100" class="form-control form-control-sm mb-2" placeholder="0.00">
+                        <label class="form-label small fw-semibold">Tipo</label>
+                        <select x-model="cl._cobro_tipo" class="form-select form-select-sm mb-2">
+                          <option value="inmediato">Inmediato (72 hs)</option>
+                          <option value="programado">Programado (fecha futura)</option>
+                        </select>
+                        <template x-if="cl._cobro_tipo==='programado'">
+                          <div class="mb-2">
+                            <label class="form-label small fw-semibold">Fecha de cobro</label>
+                            <input x-model="cl._cobro_fecha" type="date" class="form-control form-control-sm">
+                          </div>
+                        </template>
+                        <label class="form-label small fw-semibold">Descripción</label>
+                        <input x-model="cl._cobro_desc" class="form-control form-control-sm mb-3" placeholder="Cobro recurrente">
+                        <button class="btn btn-success btn-sm w-100" @click="generarCobro(cl)">
+                          <i class="bi bi-send me-1"></i>Generar cobro
+                        </button>
+                      </div>
+                    </template>
+                  </div>
+
+                  <button class="btn btn-outline-danger btn-sm w-100 mt-2" @click="eliminarCliente(cl)">
+                    <i class="bi bi-trash3 me-1"></i>Eliminar cliente
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ── HISTORIAL COBROS ── -->
+    <div x-show="page==='cobros'">
+      <h4 class="fw-bold mb-4"><i class="bi bi-receipt me-2"></i>Historial de cobros</h4>
+
+      <!-- Filtros -->
+      <div class="card-panel mb-3 p-3">
+        <div class="row g-2 align-items-center">
+          <div class="col-md-5">
+            <div class="search-box">
+              <i class="bi bi-search"></i>
+              <input type="search" x-model="busqCob" class="form-control form-control-sm" placeholder="Cliente, N° operación, transacción…">
+            </div>
+          </div>
+          <div class="col-md-7">
+            <div class="d-flex gap-2 flex-wrap align-items-center">
+              <span class="small fw-semibold text-muted">Estado:</span>
+              <template x-for="est in ['todos','acreditado','pendiente','programado','error']" :key="est">
+                <span class="filter-pill"
+                      :class="filtroEst===est ? 'active-'+est : 'inactive'"
+                      @click="filtroEst=est"
+                      x-text="est==='todos'?'Todos':est">
+                </span>
+              </template>
+              <span class="ms-auto text-muted small" x-text="cobrosFiltrados.length+' / '+cobros.length+' cobros'"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Métricas rápidas -->
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <div class="stat-card text-center py-3">
+            <div class="text-muted small">Total filtrado</div>
+            <div class="fs-4 fw-bold" x-text="cobrosFiltrados.length"></div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-card text-center py-3">
+            <div class="text-muted small">Monto total</div>
+            <div class="fs-4 fw-bold">$ <span x-text="fmtMonto(cobrosFiltrados.reduce((a,c)=>a+c.importe,0))"></span></div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-card text-center py-3">
+            <div class="text-muted small">Acreditados</div>
+            <div class="fs-4 fw-bold text-success" x-text="cobrosFiltrados.filter(c=>c.estado==='acreditado').length"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-panel">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead class="table-light"><tr>
+              <th class="ps-3">Fecha</th><th>Cliente</th><th class="text-end">Importe</th><th>Tipo</th><th>Fecha cobro</th><th>Estado</th><th>N° Operación</th><th>Transacción</th>
+            </tr></thead>
+            <tbody>
+              <template x-if="cobrosFiltrados.length===0">
+                <tr><td colspan="8" class="text-center text-muted py-5">Sin cobros con los filtros aplicados</td></tr>
+              </template>
+              <template x-for="co in cobrosFiltrados" :key="co.id">
+                <tr>
+                  <td class="ps-3 text-muted small" x-text="co.fecha"></td>
+                  <td class="fw-semibold" x-text="co.cliente"></td>
+                  <td class="text-end fw-semibold">$ <span x-text="fmtMonto(co.importe)"></span></td>
+                  <td><span class="badge bg-secondary" x-text="co.tipo"></span></td>
+                  <td class="text-muted small" x-text="co.fecha_cobro||'—'"></td>
+                  <td><span class="badge-est" :class="'est-'+co.estado" x-text="co.estado"></span></td>
+                  <td class="font-monospace small text-muted" x-text="co.nop"></td>
+                  <td class="font-monospace small text-muted" x-text="co.tx||'—'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- Toasts -->
+<div class="toast-area" id="toastArea"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function app() {
+  return {
+    loggedIn: false,
+    loginUser: '', loginPass: '', loginError: '',
+    page: 'dashboard',
+    busqCli: '', busqCob: '', filtroEst: 'todos',
+    mostrarFormCliente: false,
+    formCli: { nombre:'', apellido:'', email:'', dni:'', cuit:'', id_ep:'' },
+    clientes: [
+      { id:1, nombre:'Ana Laura', apellido:'Martínez', email:'analamartinez@gmail.com', dni:'32541200', id_ep:'FCT-32541200', _open:false, _cobro_cuenta:'', _cobro_importe:'', _cobro_tipo:'inmediato', _cobro_fecha:'', _cobro_desc:'Cobro recurrente',
+        cuentas:[{id:1, id_cuenta:'CTA-10023481', alias:'Banco Nación'}] },
+      { id:2, nombre:'Roberto', apellido:'Fernández', email:'rfernandez@outlook.com', dni:'28903450', id_ep:'FCT-28903450', _open:false, _cobro_cuenta:'', _cobro_importe:'', _cobro_tipo:'inmediato', _cobro_fecha:'', _cobro_desc:'Cobro recurrente',
+        cuentas:[{id:2, id_cuenta:'CTA-10054329', alias:'Santander'},{id:3, id_cuenta:'CTA-10054330', alias:'Banco Provincia'}] },
+      { id:3, nombre:'Silvia', apellido:'Romero', email:'silvia.romero@yahoo.com', dni:'35120780', id_ep:'FCT-35120780', _open:false, _cobro_cuenta:'', _cobro_importe:'', _cobro_tipo:'inmediato', _cobro_fecha:'', _cobro_desc:'Cobro recurrente',
+        cuentas:[{id:4, id_cuenta:'CTA-10087652', alias:'BBVA'}] },
+      { id:4, nombre:'Diego', apellido:'Acosta', email:'dacosta@empresa.com', dni:'29876543', id_ep:'FCT-29876543', _open:false, _cobro_cuenta:'', _cobro_importe:'', _cobro_tipo:'inmediato', _cobro_fecha:'', _cobro_desc:'Cobro recurrente',
+        cuentas:[{id:5, id_cuenta:'CTA-10091233', alias:'Galicia'}] },
+      { id:5, nombre:'Verónica', apellido:'Ibáñez', email:'veronicai@gmail.com', dni:'41002341', id_ep:'FCT-41002341', _open:false, _cobro_cuenta:'', _cobro_importe:'', _cobro_tipo:'inmediato', _cobro_fecha:'', _cobro_desc:'Cobro recurrente',
+        cuentas:[{id:6, id_cuenta:'CTA-10102345', alias:'Mercado Pago'}] },
+      { id:6, nombre:'Marcelo', apellido:'Suárez', email:'msuarez@hotmail.com', dni:'25431890', id_ep:'FCT-25431890', _open:false, _cobro_cuenta:'', _cobro_importe:'', _cobro_tipo:'inmediato', _cobro_fecha:'', _cobro_desc:'Cobro recurrente',
+        cuentas:[] },
+    ],
+    cobros: [
+      {id:1,cliente_id:1,cliente:'Martínez, Ana Laura',importe:8500,tipo:'inmediato',estado:'acreditado',fecha:'17/05/2026',nop:'OP-A1B2C3D4E5F6',tx:'TX-78234',fecha_cobro:null},
+      {id:2,cliente_id:1,cliente:'Martínez, Ana Laura',importe:8500,tipo:'inmediato',estado:'pendiente',fecha:'17/05/2026',nop:'OP-B2C3D4E5F6G7',tx:null,fecha_cobro:null},
+      {id:3,cliente_id:2,cliente:'Fernández, Roberto',importe:12000,tipo:'inmediato',estado:'acreditado',fecha:'17/05/2026',nop:'OP-C3D4E5F6G7H8',tx:'TX-78235',fecha_cobro:null},
+      {id:4,cliente_id:2,cliente:'Fernández, Roberto',importe:12000,tipo:'programado',estado:'programado',fecha:'17/05/2026',nop:'OP-D4E5F6G7H8I9',tx:null,fecha_cobro:'15/06/2026'},
+      {id:5,cliente_id:3,cliente:'Romero, Silvia',importe:5500,tipo:'inmediato',estado:'acreditado',fecha:'17/05/2026',nop:'OP-E5F6G7H8I9J0',tx:'TX-78236',fecha_cobro:null},
+      {id:6,cliente_id:4,cliente:'Acosta, Diego',importe:3200,tipo:'inmediato',estado:'acreditado',fecha:'17/05/2026',nop:'OP-F6G7H8I9J0K1',tx:'TX-78237',fecha_cobro:null},
+      {id:7,cliente_id:5,cliente:'Ibáñez, Verónica',importe:9800,tipo:'inmediato',estado:'error',fecha:'17/05/2026',nop:'OP-G7H8I9J0K1L2',tx:null,fecha_cobro:null},
+      {id:8,cliente_id:6,cliente:'Suárez, Marcelo',importe:6700,tipo:'programado',estado:'programado',fecha:'17/05/2026',nop:'OP-H8I9J0K1L2M3',tx:null,fecha_cobro:'15/06/2026'},
+    ],
+    _nextId: 100,
+
+    init() {
+      this.$nextTick(() => this.buildCharts());
+    },
+
+    login() {
+      if (this.loginUser === 'admin' && this.loginPass === 'admin1234') {
+        this.loggedIn = true; this.loginError = '';
+        this.$nextTick(() => this.buildCharts());
+      } else {
+        this.loginError = 'Usuario o contraseña incorrectos';
+      }
+    },
+
+    logout() { this.loggedIn = false; this.loginUser=''; this.loginPass=''; },
+
+    get clientesFiltrados() {
+      if (!this.busqCli.trim()) return this.clientes;
+      const q = this.busqCli.toLowerCase();
+      return this.clientes.filter(c =>
+        c.nombre.toLowerCase().includes(q) || c.apellido.toLowerCase().includes(q) ||
+        c.email.toLowerCase().includes(q) || c.id_ep.toLowerCase().includes(q)
+      );
+    },
+
+    get cobrosFiltrados() {
+      let lista = this.cobros;
+      if (this.filtroEst !== 'todos') lista = lista.filter(c => c.estado === this.filtroEst);
+      const q = this.busqCob.toLowerCase().trim();
+      if (q) lista = lista.filter(c =>
+        c.cliente.toLowerCase().includes(q) || c.nop.toLowerCase().includes(q) || (c.tx||'').toLowerCase().includes(q)
+      );
+      return lista;
+    },
+
+    agregarCliente() {
+      if (!this.formCli.nombre || !this.formCli.apellido || !this.formCli.id_ep || this.formCli.id_ep.length < 6) {
+        this.toast('Completá todos los campos. ID debe tener al menos 6 caracteres.', 'error'); return;
+      }
+      const nuevo = { id: this._nextId++, ...this.formCli, cuentas: [], _open:false,
+        _cobro_cuenta:'', _cobro_importe:'', _cobro_tipo:'inmediato', _cobro_fecha:'', _cobro_desc:'Cobro recurrente' };
+      this.clientes.push(nuevo);
+      this.formCli = { nombre:'', apellido:'', email:'', dni:'', cuit:'', id_ep:'' };
+      this.mostrarFormCliente = false;
+      this.toast(`✅ Cliente ${nuevo.apellido}, ${nuevo.nombre} agregado`);
+    },
+
+    eliminarCliente(cl) {
+      if (!confirm(`¿Eliminar a ${cl.apellido}, ${cl.nombre}?`)) return;
+      this.clientes = this.clientes.filter(c => c.id !== cl.id);
+      this.toast(`🗑️ Cliente ${cl.apellido} eliminado`);
+    },
+
+    sincronizarCBU(cl) {
+      // Simulación: agrega una cuenta de prueba si no tiene
+      if (cl.cuentas.length > 0) {
+        this.toast('ℹ️ Ya tiene CBU registrados (sandbox: sin nuevas cuentas)'); return;
+      }
+      const nuevaCuenta = { id: this._nextId++, id_cuenta: `CTA-${Math.floor(Math.random()*90000+10000)}`, alias: 'Banco simulado' };
+      cl.cuentas.push(nuevaCuenta);
+      this.toast(`✅ 1 CBU sincronizado para ${cl.apellido}`);
+    },
+
+    generarCobro(cl) {
+      if (!cl._cobro_cuenta || !cl._cobro_importe || cl._cobro_importe <= 0) {
+        this.toast('Seleccioná cuenta e ingresá un importe válido', 'error'); return;
+      }
+      const nop = 'OP-' + Math.random().toString(36).slice(2,14).toUpperCase();
+      const nuevo = {
+        id: this._nextId++, cliente_id: cl.id, cliente: `${cl.apellido}, ${cl.nombre}`,
+        importe: parseFloat(cl._cobro_importe), tipo: cl._cobro_tipo,
+        estado: cl._cobro_tipo === 'programado' ? 'programado' : 'pendiente',
+        fecha: new Date().toLocaleDateString('es-AR'), nop,
+        tx: cl._cobro_tipo === 'programado' ? null : 'TX-SIM'+Date.now(),
+        fecha_cobro: cl._cobro_fecha || null,
+      };
+      this.cobros.unshift(nuevo);
+      cl._cobro_cuenta = ''; cl._cobro_importe = ''; cl._cobro_desc = 'Cobro recurrente';
+      this.toast(`💸 Cobro $${this.fmtMonto(nuevo.importe)} generado — ${nop}`);
+    },
+
+    fmtMonto(v) { return Number(v).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); },
+
+    toast(msg, type='success') {
+      const el = document.createElement('div');
+      el.className = `toast-item ${type}`;
+      el.innerHTML = `<i class="bi ${type==='success'?'bi-check-circle-fill text-success':'bi-x-circle-fill text-danger'}"></i>${msg}`;
+      document.getElementById('toastArea').appendChild(el);
+      setTimeout(() => el.style.opacity='0', 3000);
+      setTimeout(() => el.remove(), 3400);
+    },
+
+    buildCharts() {
+      const meses = ['Dic 2025','Ene 2026','Feb 2026','Mar 2026','Abr 2026','May 2026'];
+      const ctxM = document.getElementById('chartMeses');
+      if (!ctxM) return;
+      if (ctxM._chart) ctxM._chart.destroy();
+      ctxM._chart = new Chart(ctxM, {
+        data: {
+          labels: meses,
+          datasets: [
+            { type:'bar', label:'Cantidad', data:[0,0,0,1,2,5], backgroundColor:'#3b82f6', yAxisID:'y', borderRadius:6 },
+            { type:'line', label:'Monto $', data:[0,0,0,5500,20500,33200], borderColor:'#10b981', yAxisID:'y2', tension:.4, pointRadius:4, fill:false },
+          ]
+        },
+        options: { responsive:true, plugins:{legend:{position:'bottom'}}, scales:{
+          y:{title:{display:true,text:'Cantidad'}},
+          y2:{position:'right',title:{display:true,text:'ARS'},grid:{drawOnChartArea:false}}
+        }}
+      });
+
+      const ctxE = document.getElementById('chartEstado');
+      if (!ctxE) return;
+      if (ctxE._chart) ctxE._chart.destroy();
+      ctxE._chart = new Chart(ctxE, {
+        type:'doughnut',
+        data: { labels:['acreditado','pendiente','programado','error'], datasets:[{data:[4,1,2,1], backgroundColor:['#10b981','#f59e0b','#3b82f6','#ef4444'], borderWidth:2}] },
+        options: { responsive:true, plugins:{legend:{position:'bottom'}}, cutout:'55%' }
+      });
+    },
+  };
+}
+</script>
+</body>
+</html>
