@@ -2,54 +2,201 @@
 {% block title %}Historial de cobros — ePagos{% endblock %}
 
 {% block content %}
-<h4 class="fw-bold mb-4"><i class="bi bi-receipt me-2"></i>Historial de cobros</h4>
+<div x-data="cobrosApp()" x-init="init()" x-cloak>
 
-<div class="card shadow-sm border-0">
-  <div class="card-body p-0">
-    <table class="table table-hover align-middle mb-0">
-      <thead class="table-light">
-        <tr>
-          <th>Fecha</th>
-          <th>Cliente</th>
-          <th>Importe</th>
-          <th>Tipo</th>
-          <th>Fecha cobro</th>
-          <th>Estado</th>
-          <th>N° Operación</th>
-          <th>Transacción</th>
-          <th>Error</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for co in cobros %}
-        <tr>
-          <td class="small text-muted">{{ co.creado_en.strftime("%d/%m/%Y %H:%M") }}</td>
-          <td>
-            <a href="/dashboard/clientes/{{ co.cliente_id }}" class="text-decoration-none">
-              {{ co.cliente.apellido }}, {{ co.cliente.nombre }}
-            </a>
-          </td>
-          <td class="fw-semibold">$ {{ "%.2f"|format(co.importe) }}</td>
-          <td><span class="badge bg-secondary">{{ co.tipo }}</span></td>
-          <td class="small">
-            {% if co.fecha_cobro %}{{ co.fecha_cobro.strftime("%d/%m/%Y") }}{% else %}—{% endif %}
-          </td>
-          <td><span class="badge badge-estado-{{ co.estado }}">{{ co.estado }}</span></td>
-          <td class="font-monospace small">{{ co.numero_operacion }}</td>
-          <td class="font-monospace small text-muted">{{ co.id_transaccion or "—" }}</td>
-          <td class="small text-danger" style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"
-              title="{{ co.error or '' }}">{{ co.error or "" }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="9" class="text-center text-muted py-5">Sin cobros todavía</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <h4 class="fw-bold mb-0"><i class="bi bi-receipt me-2"></i>Historial de cobros</h4>
+    <button class="btn btn-sm btn-outline-secondary" @click="cargar()" :disabled="cargando">
+      <i class="bi bi-arrow-repeat me-1" :class="{'spin': cargando}"></i>Actualizar
+    </button>
   </div>
-</div>
 
-<div class="mt-3 text-muted small">
-  Mostrando los últimos 200 cobros.
-  Los estados se actualizan automáticamente cuando ePagos envía el webhook.
+  <!-- Filtros -->
+  <div class="card shadow-sm border-0 mb-3">
+    <div class="card-body py-2">
+      <div class="row g-2 align-items-center">
+        <div class="col-md-4">
+          <div class="input-group input-group-sm">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="search" x-model="busqueda" class="form-control"
+                   placeholder="Buscar por cliente, N° operación, transacción…"
+                   autocomplete="off">
+          </div>
+        </div>
+        <div class="col-md-auto">
+          <label class="form-label small mb-0 me-2 fw-semibold">Estado:</label>
+          <div class="btn-group btn-group-sm" role="group">
+            <button type="button" class="btn"
+                    :class="filtroEstado === '' ? 'btn-dark' : 'btn-outline-secondary'"
+                    @click="filtroEstado = ''">Todos</button>
+            <button type="button" class="btn"
+                    :class="filtroEstado === 'acreditado' ? 'btn-success' : 'btn-outline-success'"
+                    @click="filtroEstado = 'acreditado'">Acreditado</button>
+            <button type="button" class="btn"
+                    :class="filtroEstado === 'pendiente' ? 'btn-warning text-dark' : 'btn-outline-warning'"
+                    @click="filtroEstado = 'pendiente'">Pendiente</button>
+            <button type="button" class="btn"
+                    :class="filtroEstado === 'programado' ? 'btn-primary' : 'btn-outline-primary'"
+                    @click="filtroEstado = 'programado'">Programado</button>
+            <button type="button" class="btn"
+                    :class="filtroEstado === 'error' ? 'btn-danger' : 'btn-outline-danger'"
+                    @click="filtroEstado = 'error'">Error</button>
+          </div>
+        </div>
+        <div class="col-md-auto ms-auto text-muted small">
+          <span x-text="cobros_filtrados.length"></span> de <span x-text="cobros.length"></span> cobros
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cargando -->
+  <template x-if="cargando && cobros.length === 0">
+    <div class="text-center py-5">
+      <div class="spinner-border text-primary" role="status"></div>
+      <p class="mt-2 text-muted">Cargando cobros…</p>
+    </div>
+  </template>
+
+  <!-- Error -->
+  <template x-if="errorMsg">
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-2"></i><span x-text="errorMsg"></span></div>
+  </template>
+
+  <!-- Tabla -->
+  <div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th class="text-end">Importe</th>
+              <th>Tipo</th>
+              <th>Fecha cobro</th>
+              <th>Estado</th>
+              <th>N° Operación</th>
+              <th>Transacción</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-if="cobros_filtrados.length === 0 && !cargando">
+              <tr>
+                <td colspan="9" class="text-center text-muted py-5">
+                  <template x-if="busqueda || filtroEstado">
+                    <span>No hay cobros que coincidan con los filtros aplicados.</span>
+                  </template>
+                  <template x-if="!busqueda && !filtroEstado">
+                    <span>Sin cobros todavía.</span>
+                  </template>
+                </td>
+              </tr>
+            </template>
+            <template x-for="co in cobros_filtrados" :key="co.id">
+              <tr>
+                <td class="small text-muted text-nowrap" x-text="fmtFecha(co.creado_en)"></td>
+                <td>
+                  <a :href="'/dashboard/clientes/' + co.cliente_id" class="text-decoration-none fw-semibold"
+                     x-text="co.cliente_nombre"></a>
+                </td>
+                <td class="fw-semibold text-end text-nowrap">$ <span x-text="fmtMonto(co.importe)"></span></td>
+                <td><span class="badge bg-secondary" x-text="co.tipo"></span></td>
+                <td class="small text-nowrap" x-text="co.fecha_cobro ? fmtFechaCorta(co.fecha_cobro) : '—'"></td>
+                <td><span :class="'badge badge-estado-' + co.estado" x-text="co.estado"></span></td>
+                <td class="font-monospace small" x-text="co.numero_operacion"></td>
+                <td class="font-monospace small text-muted" x-text="co.id_transaccion || '—'"></td>
+                <td class="small text-danger"
+                    style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"
+                    :title="co.error"
+                    x-text="co.error || ''"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-3 text-muted small">
+    Mostrando los últimos 200 cobros. Los estados se actualizan automáticamente cuando ePagos envía el webhook.
+  </div>
+
 </div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+</style>
+<script>
+function cobrosApp() {
+  return {
+    cobros: [],
+    cargando: false,
+    errorMsg: null,
+    busqueda: '',
+    filtroEstado: '',
+
+    async init() {
+      await this.cargar();
+    },
+
+    async cargar() {
+      this.cargando = true;
+      this.errorMsg = null;
+      try {
+        const res = await fetch('/api/cobros');
+        if (!res.ok) throw new Error('Error al cargar cobros');
+        this.cobros = await res.json();
+      } catch (e) {
+        this.errorMsg = e.message;
+      } finally {
+        this.cargando = false;
+      }
+    },
+
+    get cobros_filtrados() {
+      let lista = this.cobros;
+      if (this.filtroEstado) {
+        lista = lista.filter(c => c.estado === this.filtroEstado);
+      }
+      const q = this.busqueda.toLowerCase().trim();
+      if (q) {
+        lista = lista.filter(c =>
+          c.cliente_nombre.toLowerCase().includes(q) ||
+          c.numero_operacion.toLowerCase().includes(q) ||
+          (c.id_transaccion && c.id_transaccion.toLowerCase().includes(q)) ||
+          fmtMonto(c.importe).includes(q)
+        );
+      }
+      return lista;
+    },
+
+    fmtFecha(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleDateString('es-AR') + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    },
+
+    fmtFechaCorta(iso) {
+      if (!iso) return '—';
+      const parts = iso.split('T')[0].split('-');
+      if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0];
+      return new Date(iso).toLocaleDateString('es-AR');
+    },
+
+    fmtMonto(v) {
+      return Number(v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    },
+  };
+}
+
+// standalone helper used in get cobros_filtrados (no 'this' context there)
+function fmtMonto(v) {
+  return Number(v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+</script>
 {% endblock %}
