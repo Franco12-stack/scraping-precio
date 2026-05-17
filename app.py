@@ -11,9 +11,12 @@ from datetime import date, datetime
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from epagos import EpagosClient, EpagosError, PagoEvento
+from db import init_db
+from dashboard import router as dashboard_router
 
 load_dotenv()
 
@@ -21,6 +24,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 app = FastAPI(title="ePagos - Cobros Recurrentes", version="1.0.0")
+
+# Inicializar BD y montar dashboard
+init_db()
+app.include_router(dashboard_router)
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/dashboard")
 
 
 def get_client() -> EpagosClient:

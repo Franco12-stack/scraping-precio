@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Inicio — ePagos Dashboard{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0">Panel principal</h4>
+  <span class="text-muted small">Sandbox activo</span>
+</div>
+
+<!-- Estadísticas -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card shadow-sm p-3">
+      <div class="text-muted small mb-1">Clientes registrados</div>
+      <div class="fs-3 fw-bold">{{ total_clientes }}</div>
+      <a href="/dashboard/clientes" class="small">Ver todos →</a>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card shadow-sm p-3">
+      <div class="text-muted small mb-1">CBU registrados</div>
+      <div class="fs-3 fw-bold">{{ total_cuentas }}</div>
+      <span class="small text-muted">Cuentas activas</span>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card shadow-sm p-3">
+      <div class="text-muted small mb-1">Cobros generados</div>
+      <div class="fs-3 fw-bold">{{ total_cobros }}</div>
+      <a href="/dashboard/cobros" class="small">Ver historial →</a>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card shadow-sm p-3">
+      <div class="text-muted small mb-1">Monto acreditado</div>
+      <div class="fs-3 fw-bold">$ {{ "%.2f"|format(monto_total) }}</div>
+      <span class="small text-muted">ARS total</span>
+    </div>
+  </div>
+</div>
+
+<!-- Info límite CBU -->
+<div class="alert alert-info d-flex align-items-start gap-3 mb-4">
+  <i class="bi bi-info-circle-fill fs-5 mt-1"></i>
+  <div>
+    <strong>Límite de CBU:</strong> ePagos no publica un límite fijo de cuentas por convenio.
+    El sistema no pone tope en producción por defecto — si necesitás confirmar el límite
+    de tu convenio <strong>28642</strong>, consultalo directamente con soporte ePagos.
+    El sandbox suele tener un límite reducido (10–50 cuentas de prueba).
+  </div>
+</div>
+
+<!-- Últimos cobros -->
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white fw-semibold">Últimos cobros</div>
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Fecha</th>
+          <th>Cliente</th>
+          <th>Importe</th>
+          <th>Tipo</th>
+          <th>Estado</th>
+          <th>N° Operación</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in ultimos_cobros %}
+        <tr>
+          <td class="small text-muted">{{ c.creado_en.strftime("%d/%m/%Y %H:%M") }}</td>
+          <td>
+            <a href="/dashboard/clientes/{{ c.cliente_id }}">
+              {{ c.cliente.apellido }}, {{ c.cliente.nombre }}
+            </a>
+          </td>
+          <td class="fw-semibold">$ {{ "%.2f"|format(c.importe) }}</td>
+          <td><span class="badge bg-secondary">{{ c.tipo }}</span></td>
+          <td><span class="badge badge-estado-{{ c.estado }}">{{ c.estado }}</span></td>
+          <td class="font-monospace small">{{ c.numero_operacion }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-4">Sin cobros todavía</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

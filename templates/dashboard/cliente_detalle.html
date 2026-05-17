@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}{{ cliente.apellido }}, {{ cliente.nombre }} — ePagos{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/dashboard/clientes">Clientes</a></li>
+    <li class="breadcrumb-item active">{{ cliente.apellido }}, {{ cliente.nombre }}</li>
+  </ol>
+</nav>
+
+<!-- Header cliente -->
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <h5 class="fw-bold mb-1">{{ cliente.apellido }}, {{ cliente.nombre }}</h5>
+        <div class="text-muted small">
+          <i class="bi bi-envelope me-1"></i>{{ cliente.email }}
+          &nbsp;·&nbsp;
+          <i class="bi bi-person-badge me-1"></i>DNI {{ cliente.dni }}
+          &nbsp;·&nbsp;
+          CUIT {{ cliente.cuit }}
+        </div>
+        <div class="mt-1">
+          <span class="badge bg-light text-dark font-monospace">ID: {{ cliente.identificador_cliente }}</span>
+        </div>
+      </div>
+      <div class="d-flex gap-2">
+        <!-- Sincronizar CBU desde ePagos -->
+        <form method="post" action="/dashboard/clientes/{{ cliente.id }}/sync_cbu">
+          <button class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-arrow-repeat me-1"></i>Sincronizar CBU
+          </button>
+        </form>
+        <!-- Nuevo cobro -->
+        <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#modalCobro">
+          <i class="bi bi-cash-coin me-1"></i>Generar cobro
+        </button>
+        <!-- Eliminar cliente -->
+        <form method="post" action="/dashboard/clientes/{{ cliente.id }}/eliminar"
+              onsubmit="return confirm('¿Eliminar cliente y todos sus datos?')">
+          <button class="btn btn-outline-danger btn-sm">
+            <i class="bi bi-trash3"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Cuentas CBU -->
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">Cuentas CBU/CVU registradas</span>
+    <span class="badge bg-primary rounded-pill">{{ cliente.cuentas|length }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Identificador cuenta</th>
+          <th>CBU / Alias</th>
+          <th>Sincronizado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cuenta in cliente.cuentas %}
+        <tr>
+          <td class="font-monospace small">{{ cuenta.identificador_cuenta }}</td>
+          <td class="small">
+            {% if cuenta.cbu %}<span class="font-monospace">{{ cuenta.cbu }}</span>{% endif %}
+            {% if cuenta.alias %}<span class="text-muted ms-2">{{ cuenta.alias }}</span>{% endif %}
+          </td>
+          <td class="text-muted small">{{ cuenta.sincronizado_en.strftime("%d/%m/%Y %H:%M") }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="text-center text-muted py-3">
+          Sin CBU registrados. Hacé clic en <strong>Sincronizar CBU</strong> para traer las cuentas de ePagos.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Historial de cobros del cliente -->
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white fw-semibold">Historial de cobros</div>
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Fecha</th>
+          <th>Importe</th>
+          <th>Tipo</th>
+          <th>Fecha cobro</th>
+          <th>Estado</th>
+          <th>N° Operación</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for co in cobros %}
+        <tr>
+          <td class="small text-muted">{{ co.creado_en.strftime("%d/%m/%Y %H:%M") }}</td>
+          <td class="fw-semibold">$ {{ "%.2f"|format(co.importe) }}</td>
+          <td><span class="badge bg-secondary">{{ co.tipo }}</span></td>
+          <td class="small">
+            {% if co.fecha_cobro %}{{ co.fecha_cobro.strftime("%d/%m/%Y") }}{% else %}—{% endif %}
+          </td>
+          <td><span class="badge badge-estado-{{ co.estado }}">{{ co.estado }}</span></td>
+          <td class="font-monospace small">{{ co.numero_operacion }}</td>
+          <td class="small text-danger">{{ co.error or "" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted py-4">Sin cobros todavía</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal generar cobro -->
+<div class="modal fade" id="modalCobro" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="/dashboard/cobros/nuevo">
+        <input type="hidden" name="cliente_id" value="{{ cliente.id }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Generar cobro — {{ cliente.nombre }} {{ cliente.apellido }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          {% if not cliente.cuentas %}
+          <div class="alert alert-warning">
+            El cliente no tiene CBU registrados. Primero sincronizá las cuentas desde ePagos.
+          </div>
+          {% else %}
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Cuenta CBU</label>
+              <select name="cuenta_id" class="form-select" required>
+                {% for cuenta in cliente.cuentas %}
+                <option value="{{ cuenta.id }}">
+                  {{ cuenta.identificador_cuenta }}{% if cuenta.cbu %} — {{ cuenta.cbu }}{% endif %}{% if cuenta.alias %} ({{ cuenta.alias }}){% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Importe (ARS)</label>
+              <input name="importe" type="number" step="0.01" min="1" class="form-control" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-semibold">Tipo</label>
+              <select name="tipo" class="form-select" id="selTipo">
+                <option value="inmediato">Inmediato (72 hs)</option>
+                <option value="programado">Programado (fecha futura)</option>
+              </select>
+            </div>
+            <div class="col-12" id="campoFecha" style="display:none">
+              <label class="form-label small fw-semibold">Fecha de cobro</label>
+              <input name="fecha_cobro" type="date" class="form-control" min="{{ hoy }}">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Descripción</label>
+              <input name="descripcion" class="form-control" value="Cobro recurrente">
+            </div>
+          </div>
+          {% endif %}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          {% if cliente.cuentas %}
+          <button type="submit" class="btn btn-success">Generar cobro</button>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.getElementById('selTipo').addEventListener('change', function() {
+    document.getElementById('campoFecha').style.display =
+      this.value === 'programado' ? 'block' : 'none';
+  });
+</script>
+{% endblock %}
