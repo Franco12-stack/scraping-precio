@@ -38,7 +38,8 @@ class EpagosClient:
         self.id_usuario   = id_usuario   or os.environ["EPAGOS_ID_USUARIO"]
         self.password     = password     or os.environ["EPAGOS_PASSWORD"]
         self.hash_auth    = hash_auth    or os.environ["EPAGOS_HASH"]
-        self.convenio     = convenio     or int(os.environ["EPAGOS_CONVENIO"])
+        _conv = os.getenv("EPAGOS_CONVENIO", "")
+        self.convenio = convenio or (int(_conv) if _conv.strip().isdigit() else None)
         self.entorno      = (entorno or os.getenv("EPAGOS_ENTORNO", "sandbox")).lower()
 
         wsdl = WSDL_SANDBOX if self.entorno == "sandbox" else WSDL_PRODUCCION
@@ -224,10 +225,15 @@ class EpagosClient:
     # Helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _validar_respuesta(id_resp: Any, respuesta: Any) -> None:
-        id_str = str(id_resp)
-        if id_str != "0":
+    # Códigos de éxito conocidos: 01001 (token), 4001 (pagos), 5001 (rendiciones), etc.
+    # Los códigos de error tienen dígito final par (01002, 01004...) o empiezan con "02".
+    _ERROR_PREFIXES = ("02", "03")
+
+    @classmethod
+    def _validar_respuesta(cls, id_resp: Any, respuesta: Any) -> None:
+        id_str = str(id_resp).strip()
+        msg = str(respuesta).lower()
+        if any(id_str.startswith(p) for p in cls._ERROR_PREFIXES) or "error" in msg:
             raise EpagosError(id_str, str(respuesta))
 
     @staticmethod
