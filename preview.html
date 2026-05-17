@@ -114,6 +114,10 @@
       <div class="nav-link" :class="{active: page==='cobros'}" @click="page='cobros'">
         <i class="bi bi-receipt"></i> Historial cobros
       </div>
+      <div class="nav-link" :class="{active: page==='masivo'}" @click="page='masivo'"
+           style="color:#ffd700; font-weight:600">
+        <i class="bi bi-lightning-charge-fill"></i> Cobros masivos
+      </div>
     </nav>
     <div class="nav-link logout mt-auto" @click="logout()">
       <i class="bi bi-box-arrow-right"></i> Salir
@@ -380,6 +384,149 @@
       </div>
     </div>
 
+    <!-- ── COBROS MASIVOS ── -->
+    <div x-show="page==='masivo'">
+      <div class="mb-4">
+        <h4 class="fw-bold mb-0"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>Cobros Masivos</h4>
+        <small class="text-muted">Cobrá a todos los CBU registrados de una sola vez</small>
+      </div>
+
+      <!-- Config -->
+      <div class="card-panel mb-4">
+        <div class="cp-header"><i class="bi bi-sliders me-2"></i>Configuración del cobro</div>
+        <div class="cp-body p-3">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label small fw-semibold">Importe por defecto (ARS)</label>
+              <div class="input-group">
+                <span class="input-group-text">$</span>
+                <input x-model="masivo.importe" type="number" min="1" step="0.01" class="form-control"
+                       placeholder="0.00" @input="masivo.aplicarGlobal()">
+              </div>
+              <div class="form-text">Se aplica a todos. Podés editar por fila.</div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-semibold">Tipo</label>
+              <select x-model="masivo.tipo" class="form-select">
+                <option value="inmediato">Inmediato (72 hs hábiles)</option>
+                <option value="programado">Programado (fecha futura)</option>
+              </select>
+            </div>
+            <div class="col-md-3" x-show="masivo.tipo==='programado'" x-transition>
+              <label class="form-label small fw-semibold">Fecha de cobro</label>
+              <input x-model="masivo.fecha" type="date" class="form-control">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-semibold">Descripción</label>
+              <input x-model="masivo.descripcion" class="form-control" placeholder="Cuota mayo 2026">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Acciones -->
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <div class="d-flex gap-2 align-items-center">
+          <button class="btn btn-outline-secondary btn-sm" @click="masivo.rows.forEach(r=>r.sel=true)">
+            <i class="bi bi-check-all me-1"></i>Seleccionar todos
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" @click="masivo.rows.forEach(r=>r.sel=false)">
+            <i class="bi bi-x-lg me-1"></i>Deseleccionar
+          </button>
+          <span class="text-muted small">
+            <strong x-text="masivo.rows.filter(r=>r.sel).length"></strong> sel. ·
+            Total: <strong>$ <span x-text="fmtMonto(masivo.rows.filter(r=>r.sel).reduce((a,r)=>a+(parseFloat(r.importe)||0),0))"></span></strong>
+          </span>
+        </div>
+        <button class="btn btn-warning fw-semibold px-4"
+                @click="masivo.ejecutar()"
+                :disabled="masivo.rows.filter(r=>r.sel).length===0 || masivo.ejecutando">
+          <span x-show="!masivo.ejecutando">
+            <i class="bi bi-lightning-charge-fill me-1"></i>
+            Cobrar <span x-text="masivo.rows.filter(r=>r.sel).length"></span> cliente(s)
+          </span>
+          <span x-show="masivo.ejecutando">
+            <span class="spinner-border spinner-border-sm me-1"></span>Procesando…
+          </span>
+        </button>
+      </div>
+
+      <!-- Barra progreso -->
+      <div x-show="masivo.ejecutando || masivo.resultados.length>0" class="mb-3">
+        <div class="progress" style="height:6px">
+          <div class="progress-bar bg-success"
+               :style="'width:'+Math.round(masivo.resultados.length/Math.max(masivo.rows.filter(r=>r.sel).length,1)*100)+'%'"></div>
+        </div>
+      </div>
+
+      <!-- Resultados -->
+      <template x-if="masivo.resultados.length>0">
+        <div class="card-panel mb-4">
+          <div class="cp-header">
+            <span><i class="bi bi-clipboard-check me-2"></i>Resultado del lote</span>
+            <div class="d-flex gap-2">
+              <span class="badge-est est-acreditado" x-text="masivo.resultados.filter(r=>r.estado!=='error').length+' enviados'"></span>
+              <span class="badge-est est-error" x-show="masivo.resultados.filter(r=>r.estado==='error').length>0"
+                    x-text="masivo.resultados.filter(r=>r.estado==='error').length+' fallidos'"></span>
+            </div>
+          </div>
+          <table class="table table-hover mb-0">
+            <thead class="table-light"><tr>
+              <th class="ps-3">Cliente</th><th class="text-end">Importe</th><th>Estado</th><th>N° Operación</th>
+            </tr></thead>
+            <tbody>
+              <template x-for="r in masivo.resultados" :key="r.nop">
+                <tr>
+                  <td class="ps-3 fw-semibold" x-text="r.cliente"></td>
+                  <td class="text-end">$ <span x-text="fmtMonto(r.importe)"></span></td>
+                  <td><span class="badge-est" :class="'est-'+r.estado" x-text="r.estado"></span></td>
+                  <td class="font-monospace small" x-text="r.nop"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <!-- Tabla clientes -->
+      <div class="card-panel">
+        <div class="cp-header">
+          <span>Clientes con CBU</span>
+          <span class="badge-est est-acreditado" x-text="masivo.rows.length+' disponibles'"></span>
+        </div>
+        <table class="table table-hover mb-0">
+          <thead class="table-light"><tr>
+            <th class="ps-3" style="width:40px"><input type="checkbox" class="form-check-input"
+              @change="masivo.rows.forEach(r=>r.sel=$event.target.checked)"></th>
+            <th>Cliente</th><th>ID ePagos</th><th>Cuenta CBU</th><th>Importe (ARS)</th>
+          </tr></thead>
+          <tbody>
+            <template x-if="masivo.rows.length===0">
+              <tr><td colspan="5" class="text-center text-muted py-5">
+                Sin clientes con CBU. Agregá cuentas desde Clientes / CBU.
+              </td></tr>
+            </template>
+            <template x-for="row in masivo.rows" :key="row.id">
+              <tr :class="row.sel ? 'table-warning' : ''">
+                <td class="ps-3">
+                  <input type="checkbox" class="form-check-input" :checked="row.sel" @change="row.sel=$event.target.checked">
+                </td>
+                <td class="fw-semibold" x-text="row.apellido+', '+row.nombre"></td>
+                <td class="font-monospace small text-muted" x-text="row.id_ep"></td>
+                <td class="small" x-text="row.cuenta+(row.alias?' ('+row.alias+')':'')"></td>
+                <td style="width:160px">
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="number" class="form-control" x-model="row.importe" min="1" step="0.01" placeholder="0.00">
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ── HISTORIAL COBROS ── -->
     <div x-show="page==='cobros'">
       <h4 class="fw-bold mb-4"><i class="bi bi-receipt me-2"></i>Historial de cobros</h4>
@@ -501,8 +648,65 @@ function app() {
     ],
     _nextId: 100,
 
+    masivo: {
+      importe: '', tipo: 'inmediato',
+      fecha: new Date().toISOString().split('T')[0],
+      descripcion: 'Cobro recurrente',
+      rows: [], ejecutando: false, resultados: [],
+      aplicarGlobal() {}, ejecutar() {},
+    },
+
     init() {
       this.$nextTick(() => this.buildCharts());
+      this.masivo.rows = this.clientes
+        .filter(c => c.cuentas.length > 0)
+        .map(c => ({
+          id: c.id, nombre: c.nombre, apellido: c.apellido, id_ep: c.id_ep,
+          cuenta: c.cuentas[0].id_cuenta, alias: c.cuentas[0].alias,
+          importe: '', sel: true,
+        }));
+      const _app = this;
+      this.masivo.aplicarGlobal = function() {
+        if (_app.masivo.importe)
+          _app.masivo.rows.forEach(r => r.importe = _app.masivo.importe);
+      };
+      this.masivo.ejecutar = async function() {
+        const sel = _app.masivo.rows.filter(r => r.sel);
+        if (!sel.length) return;
+        const sinImporte = sel.filter(r => !r.importe || parseFloat(r.importe) <= 0);
+        if (sinImporte.length) { _app.toast(`${sinImporte.length} cliente(s) sin importe`, 'error'); return; }
+        if (_app.masivo.tipo === 'programado' && !_app.masivo.fecha) {
+          _app.toast('Elegí una fecha de cobro', 'error'); return;
+        }
+        _app.masivo.ejecutando = true;
+        _app.masivo.resultados = [];
+        for (const row of sel) {
+          await new Promise(r => setTimeout(r, 420));
+          const ok = Math.random() > 0.15;
+          const nop = 'OP-' + Math.random().toString(36).slice(2, 14).toUpperCase();
+          _app.masivo.resultados = [..._app.masivo.resultados, {
+            cliente: row.apellido + ', ' + row.nombre,
+            importe: parseFloat(row.importe),
+            estado: ok ? 'pendiente' : 'error',
+            nop: ok ? nop : ('ERR-' + Date.now()),
+          }];
+          if (ok) {
+            _app.cobros.unshift({
+              id: _app._nextId++, cliente_id: row.id,
+              cliente: row.apellido + ', ' + row.nombre,
+              importe: parseFloat(row.importe), tipo: _app.masivo.tipo,
+              estado: _app.masivo.tipo === 'programado' ? 'programado' : 'pendiente',
+              fecha: new Date().toLocaleDateString('es-AR'), nop,
+              tx: _app.masivo.tipo === 'programado' ? null : 'TX-SIM' + Date.now(),
+              fecha_cobro: _app.masivo.fecha || null,
+            });
+          }
+        }
+        _app.masivo.ejecutando = false;
+        const exitosos = _app.masivo.resultados.filter(r => r.estado !== 'error').length;
+        const fallidos = _app.masivo.resultados.filter(r => r.estado === 'error').length;
+        _app.toast(`✅ ${exitosos} cobro(s) enviados${fallidos ? ' · ⚠️ ' + fallidos + ' fallido(s)' : ''}`);
+      };
     },
 
     login() {

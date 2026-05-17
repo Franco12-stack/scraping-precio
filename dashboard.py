@@ -722,3 +722,128 @@ async def api_crear_cobro(request: Request):
             "creado_en":        cobro.creado_en.isoformat(),
             "error":            cobro.error or "",
         }, status_code=201)
+
+
+# ---------------------------------------------------------------------------
+# Cobros masivos
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard/cobros/masivo", response_class=HTMLResponse)
+def cobros_masivo_page(request: Request):
+    if not _get_current_user(request):
+        return _redirect_login()
+    with get_session() as db:
+        clientes = db.query(Cliente).order_by(Cliente.apellido).all()
+        clientes_data = [
+            {
+                "id":                    cl.id,
+                "nombre":                cl.nombre,
+                "apellido":              cl.apellido,
+                "email":                 cl.email,
+                "identificador_cliente": cl.identificador_cliente,
+                "cuentas": [
+                    {
+                        "id":                   ct.id,
+                        "identificador_cuenta": ct.identificador_cuenta,
+                        "alias":                ct.alias or "",
+                        "cbu":                  ct.cbu or "",
+                    }
+                    for ct in cl.cuentas
+                ],
+            }
+            for cl in clientes
+        ]
+    return templates.TemplateResponse("dashboard/cobros_masivo.html", {
+        "request":  request,
+        "clientes": clientes_data,
+    })
+
+
+@router.post("/api/cobros/masivo")
+async def api_cobros_masivo(request: Request):
+    """Genera cobros en lote. Body: {descripcion, tipo, fecha_cobro, cobros:[{cliente_id,cuenta_id,importe}]}"""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    data        = await request.json()
+    descripcion = data.get("descripcion", "Cobro recurrente")
+    tipo        = data.get("tipo", "inmediato")
+    fecha_cobro = data.get("fecha_cobro")
+    items       = data.get("cobros", [])
+
+    if not items:
+        return JSONResponse({"error": "No hay cobros para procesar"}, status_code=422)
+
+    resultados = []
+    exitosos = fallidos = 0
+
+    with get_session() as db:
+        ep = _epagos()
+        for item in items:
+            cliente_id = item.get("cliente_id")
+            cuenta_id  = item.get("cuenta_id")
+            importe    = item.get("importe")
+
+            if not all([cliente_id, cuenta_id, importe]):
+                resultados.append({"cliente_id": cliente_id, "cliente_nombre": "—",
+                                    "estado": "error", "numero_operacion": None,
+                                    "error": "Faltan datos"})
+                fallidos += 1
+                continue
+
+            cliente = db.get(Cliente, int(cliente_id))
+            cuenta  = db.get(Cuenta,  int(cuenta_id))
+            if not cliente or not cuenta:
+                resultados.append({"cliente_id": cliente_id,
+                                    "cliente_nombre": str(cliente_id),
+                                    "estado": "error", "numero_operacion": None,
+                                    "error": "Cliente o cuenta no encontrados"})
+                fallidos += 1
+                continue
+
+            numero_op = f"OP-{uuid.uuid4().hex[:12].upper()}"
+            cobro = Cobro(cliente_id=int(cliente_id), cuenta_id=int(cuenta_id),
+                          numero_operacion=numero_op, importe=float(importe),
+                          descripcion=descripcion, tipo=tipo,
+                          fecha_cobro=date.fromisoformat(fecha_cobro) if fecha_cobro else None,
+                          estado="enviado")
+            db.add(cobro)
+            db.flush()
+            try:
+                if tipo == "programado" and fecha_cobro:
+                    ep.solicitud_pago_recurrente_suscripcion(
+                        identificador_cliente=cliente.identificador_cliente,
+                        identificador_cuenta=cuenta.identificador_cuenta,
+                        importe=float(importe), numero_operacion=numero_op,
+                        fecha_cobro=date.fromisoformat(fecha_cobro),
+                        nombre_pagador=cliente.nombre, apellido_pagador=cliente.apellido,
+                        email_pagador=cliente.email, dni_pagador=cliente.dni,
+                        cuit_pagador=cliente.cuit, descripcion=descripcion)
+                    cobro.estado = "programado"
+                else:
+                    res = ep.solicitud_pago_recurrente(
+                        identificador_cliente=cliente.identificador_cliente,
+                        identificador_cuenta=cuenta.identificador_cuenta,
+                        importe=float(importe), numero_operacion=numero_op,
+                        nombre_pagador=cliente.nombre, apellido_pagador=cliente.apellido,
+                        email_pagador=cliente.email, dni_pagador=cliente.dni,
+                        cuit_pagador=cliente.cuit, descripcion=descripcion)
+                    cobro.id_transaccion = str(res.get("id_transaccion", ""))
+                    cobro.estado = "pendiente"
+                exitosos += 1
+                resultados.append({"cliente_id": cliente.id,
+                                    "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
+                                    "importe": float(importe), "estado": cobro.estado,
+                                    "numero_operacion": numero_op, "error": None})
+            except EpagosError as e:
+                cobro.estado = "error"
+                cobro.error  = str(e)
+                fallidos += 1
+                resultados.append({"cliente_id": cliente.id,
+                                    "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
+                                    "importe": float(importe), "estado": "error",
+                                    "numero_operacion": numero_op, "error": str(e)})
+        db.commit()
+
+    return {"total": len(items), "exitosos": exitosos, "fallidos": fallidos, "resultados": resultados}

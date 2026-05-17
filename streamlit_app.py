@@ -76,7 +76,7 @@ with st.sidebar:
     st.caption("Cobros recurrentes · Sandbox")
     pagina = st.radio(
         "Navegación",
-        ["📊 Dashboard", "👥 Clientes / CBU", "🧾 Historial cobros"],
+        ["📊 Dashboard", "👥 Clientes / CBU", "🧾 Historial cobros", "⚡ Cobros masivos"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -458,3 +458,142 @@ elif pagina == "🧾 Historial cobros":
         )
     else:
         st.info("No hay cobros con los filtros aplicados.")
+
+# ════════════════════════════════════════════════════════════════════════════
+# PÁGINA: COBROS MASIVOS
+# ════════════════════════════════════════════════════════════════════════════
+elif pagina == "⚡ Cobros masivos":
+    st.title("⚡ Cobros masivos")
+    st.caption("Cobrá a todos los CBU registrados de una sola vez")
+
+    # — Config ----------------------------------------------------------------
+    col1, col2, col3, col4 = st.columns(4)
+    importe_global = col1.number_input("Importe global (ARS)", min_value=0.0, step=0.01,
+                                       format="%.2f", help="Se aplica a todos. Podés editarlo por fila.")
+    tipo = col2.selectbox("Tipo", ["inmediato", "programado"])
+    fecha_cobro_dt = col3.date_input("Fecha de cobro", min_value=date.today()) if tipo == "programado" else None
+    descripcion = col4.text_input("Descripción", value="Cobro recurrente")
+
+    # — Cargar clientes con CBU -----------------------------------------------
+    with db() as s:
+        pares = (
+            s.query(Cliente, Cuenta)
+            .join(Cuenta, Cuenta.cliente_id == Cliente.id)
+            .order_by(Cliente.apellido, Cliente.nombre)
+            .all()
+        )
+
+    if not pares:
+        st.warning("No hay clientes con CBU registrado. Sincronizá CBU desde Clientes / CBU.")
+        st.stop()
+
+    import pandas as pd
+    df = pd.DataFrame([
+        {
+            "✓": True,
+            "Cliente":      f"{c.apellido}, {c.nombre}",
+            "ID ePagos":    c.identificador_cliente,
+            "Cuenta CBU":   ct.identificador_cuenta,
+            "Alias":        ct.alias or "",
+            "Importe (ARS)": importe_global if importe_global > 0 else 0.0,
+            "_cid":         c.id,
+            "_ctid":        ct.id,
+        }
+        for c, ct in pares
+    ])
+
+    st.caption(f"{len(df)} cliente(s) con CBU disponibles")
+    edited = st.data_editor(
+        df,
+        column_config={
+            "✓":             st.column_config.CheckboxColumn("✓", default=True, width="small"),
+            "Importe (ARS)": st.column_config.NumberColumn("Importe (ARS)", min_value=0.01,
+                                                            step=0.01, format="$ %.2f"),
+            "_cid":          None,
+            "_ctid":         None,
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key="masivo_table",
+    )
+
+    sel = edited[edited["✓"] == True]
+    total_sel = sel["Importe (ARS)"].sum()
+    st.caption(f"**{len(sel)} seleccionado(s)** · Total: **$ {total_sel:,.2f}**")
+    st.divider()
+
+    if st.button(f"⚡ Cobrar {len(sel)} cliente(s)", type="primary",
+                 disabled=len(sel) == 0, use_container_width=False):
+        errores_importe = sel[sel["Importe (ARS)"] <= 0]
+        if not errores_importe.empty:
+            st.error(f"{len(errores_importe)} cliente(s) sin importe válido.")
+        elif tipo == "programado" and not fecha_cobro_dt:
+            st.error("Seleccioná una fecha de cobro.")
+        else:
+            client = EpagosClient()
+            resultados = []
+            barra = st.progress(0, text="Iniciando cobros…")
+            total = len(sel)
+
+            for i, (_, row) in enumerate(sel.iterrows()):
+                try:
+                    if tipo == "inmediato":
+                        res = client.solicitud_pago_recurrente(
+                            identificador_cliente=row["ID ePagos"],
+                            identificador_cuenta=row["Cuenta CBU"],
+                            importe=float(row["Importe (ARS)"]),
+                            descripcion=descripcion,
+                        )
+                    else:
+                        from datetime import datetime as _dt
+                        res = client.solicitud_pago_recurrente_suscripcion(
+                            identificador_cliente=row["ID ePagos"],
+                            identificador_cuenta=row["Cuenta CBU"],
+                            importe=float(row["Importe (ARS)"]),
+                            descripcion=descripcion,
+                            fecha_cobro=_dt.combine(fecha_cobro_dt, _dt.min.time()),
+                        )
+                    with db() as s2:
+                        cobro = Cobro(
+                            cliente_id=int(row["_cid"]),
+                            cuenta_id=int(row["_ctid"]),
+                            numero_operacion=res["numero_operacion"],
+                            importe=float(row["Importe (ARS)"]),
+                            descripcion=descripcion,
+                            tipo=tipo,
+                            fecha_cobro=fecha_cobro_dt if tipo == "programado" else None,
+                            estado="pendiente" if tipo == "inmediato" else "programado",
+                            id_transaccion=res.get("id_transaccion"),
+                        )
+                        s2.add(cobro)
+                        s2.commit()
+                    resultados.append({
+                        "Cliente":       row["Cliente"],
+                        "Importe":       float(row["Importe (ARS)"]),
+                        "Estado":        "✅ enviado",
+                        "N° Operación":  res["numero_operacion"],
+                    })
+                except EpagosError as e:
+                    resultados.append({
+                        "Cliente":       row["Cliente"],
+                        "Importe":       float(row["Importe (ARS)"]),
+                        "Estado":        "❌ error",
+                        "N° Operación":  str(e),
+                    })
+                barra.progress((i + 1) / total, text=f"Procesando {i + 1}/{total}…")
+
+            barra.empty()
+            exitosos = sum(1 for r in resultados if "enviado" in r["Estado"])
+            fallidos = len(resultados) - exitosos
+            if fallidos:
+                st.warning(f"✅ {exitosos} enviados · ⚠️ {fallidos} fallidos")
+            else:
+                st.success(f"✅ {exitosos} cobro(s) enviados correctamente")
+
+            st.dataframe(
+                resultados,
+                use_container_width=True,
+                hide_index=True,
+                column_config={"Importe": st.column_config.NumberColumn(format="$ %.2f")},
+            )

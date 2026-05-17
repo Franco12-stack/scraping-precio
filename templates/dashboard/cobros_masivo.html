@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block title %}Cobros Masivos — ePagos{% endblock %}
+
+{% block content %}
+<div x-data="masivosApp()" x-init="init()" x-cloak>
+
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h4 class="fw-bold mb-0"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>Cobros Masivos</h4>
+      <small class="text-muted">Cobrá a todos los CBU registrados de una sola vez</small>
+    </div>
+  </div>
+
+  <!-- Configuración del cobro -->
+  <div class="card shadow-sm border-0 mb-4">
+    <div class="card-header bg-white fw-semibold">
+      <i class="bi bi-sliders me-2"></i>Configuración del cobro
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Importe por defecto (ARS)</label>
+          <div class="input-group">
+            <span class="input-group-text">$</span>
+            <input x-model="config.importe" type="number" min="1" step="0.01"
+                   class="form-control" placeholder="0.00"
+                   @input="aplicarImporteGlobal()">
+          </div>
+          <div class="form-text">Se aplica a todos los seleccionados. Podés editarlo por cliente.</div>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Tipo</label>
+          <select x-model="config.tipo" class="form-select">
+            <option value="inmediato">Inmediato (72 hs hábiles)</option>
+            <option value="programado">Programado (fecha futura)</option>
+          </select>
+        </div>
+        <div class="col-md-3" x-show="config.tipo === 'programado'" x-transition>
+          <label class="form-label small fw-semibold">Fecha de cobro</label>
+          <input x-model="config.fecha_cobro" type="date" class="form-control" :min="hoy">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Descripción</label>
+          <input x-model="config.descripcion" class="form-control" placeholder="Cuota mayo 2026">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Barra de acciones + resumen -->
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <button class="btn btn-outline-secondary btn-sm" @click="seleccionarTodos()">
+        <i class="bi bi-check-all me-1"></i>Seleccionar todos con CBU
+      </button>
+      <button class="btn btn-outline-secondary btn-sm" @click="deseleccionarTodos()">
+        <i class="bi bi-x-lg me-1"></i>Deseleccionar todos
+      </button>
+      <span class="text-muted small">
+        <span class="fw-bold text-dark" x-text="seleccionados.length"></span> seleccionado(s) ·
+        Total: <strong>$ <span x-text="fmtMonto(totalImporte)"></span></strong>
+      </span>
+    </div>
+    <button class="btn btn-warning fw-semibold px-4"
+            @click="ejecutarCobros()"
+            :disabled="seleccionados.length === 0 || ejecutando">
+      <span x-show="!ejecutando">
+        <i class="bi bi-lightning-charge-fill me-1"></i>
+        Cobrar <span x-text="seleccionados.length"></span> cliente(s)
+      </span>
+      <span x-show="ejecutando">
+        <span class="spinner-border spinner-border-sm me-1"></span>
+        Procesando <span x-text="progreso"></span> / <span x-text="seleccionados.length"></span>…
+      </span>
+    </button>
+  </div>
+
+  <!-- Barra de progreso -->
+  <div x-show="ejecutando || resultados.length > 0" class="mb-3">
+    <div class="progress" style="height:8px">
+      <div class="progress-bar bg-success" :style="'width:' + (resultados.length / Math.max(seleccionados.length,1) * 100) + '%'"></div>
+    </div>
+  </div>
+
+  <!-- Resultados del lote -->
+  <template x-if="resultados.length > 0">
+    <div class="card shadow-sm border-0 mb-4">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="bi bi-clipboard-check me-2"></i>Resultado del lote</span>
+        <div class="d-flex gap-2">
+          <span class="badge bg-success rounded-pill" x-text="exitosos + ' exitosos'"></span>
+          <span class="badge bg-danger rounded-pill" x-show="fallidos > 0" x-text="fallidos + ' fallidos'"></span>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">Cliente</th>
+              <th class="text-end">Importe</th>
+              <th>Estado</th>
+              <th>N° Operación</th>
+              <th>Detalle</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in resultados" :key="r.numero_operacion">
+              <tr>
+                <td class="ps-3 fw-semibold" x-text="r.cliente_nombre"></td>
+                <td class="text-end">$ <span x-text="fmtMonto(r.importe)"></span></td>
+                <td><span :class="'badge badge-estado-' + r.estado" x-text="r.estado"></span></td>
+                <td class="font-monospace small" x-text="r.numero_operacion || '—'"></td>
+                <td class="small text-danger" x-text="r.error || ''"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </template>
+
+  <!-- Tabla de clientes -->
+  <div class="card shadow-sm border-0">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <span class="fw-semibold">Clientes con CBU registrado</span>
+      <span class="badge bg-primary rounded-pill" x-text="conCBU.length + ' disponibles'"></span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3" style="width:40px">
+              <input type="checkbox" class="form-check-input"
+                     @change="$event.target.checked ? seleccionarTodos() : deseleccionarTodos()">
+            </th>
+            <th>Cliente</th>
+            <th>ID ePagos</th>
+            <th>Cuenta CBU</th>
+            <th>Importe (ARS)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-if="conCBU.length === 0">
+            <tr><td colspan="5" class="text-center text-muted py-5">
+              No hay clientes con CBU registrado. Sincronizá los CBU desde la sección Clientes.
+            </td></tr>
+          </template>
+          <template x-for="row in conCBU" :key="row.cliente_id + '-' + row.cuenta_id">
+            <tr :class="row.seleccionado ? 'table-warning' : ''">
+              <td class="ps-3">
+                <input type="checkbox" class="form-check-input"
+                       :checked="row.seleccionado"
+                       @change="row.seleccionado = $event.target.checked">
+              </td>
+              <td class="fw-semibold" x-text="row.apellido + ', ' + row.nombre"></td>
+              <td class="font-monospace small text-muted" x-text="row.id_ep"></td>
+              <td class="small">
+                <span x-text="row.id_cuenta"></span>
+                <span class="text-muted ms-1" x-text="row.alias ? '(' + row.alias + ')' : ''"></span>
+              </td>
+              <td style="width:180px">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text">$</span>
+                  <input type="number" class="form-control" x-model="row.importe"
+                         min="1" step="0.01" placeholder="0.00">
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Sin CBU -->
+  <template x-if="sinCBU.length > 0">
+    <div class="alert alert-warning mt-3 d-flex gap-2 align-items-start">
+      <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+      <div>
+        <strong x-text="sinCBU.length + ' cliente(s) sin CBU'"></strong> no se incluirán en el cobro:
+        <span x-text="sinCBU.map(c => c.apellido + ', ' + c.nombre).join(' · ')"></span>
+      </div>
+    </div>
+  </template>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function masivosApp() {
+  const clientes = {{ clientes | tojson }};
+
+  return {
+    hoy: new Date().toISOString().split('T')[0],
+    config: { importe: '', tipo: 'inmediato', fecha_cobro: '', descripcion: 'Cobro recurrente' },
+    conCBU: [],
+    sinCBU: [],
+    ejecutando: false,
+    progreso: 0,
+    resultados: [],
+    exitosos: 0,
+    fallidos: 0,
+
+    init() {
+      this.conCBU = [];
+      this.sinCBU = [];
+      clientes.forEach(cl => {
+        if (cl.cuentas.length > 0) {
+          // Usar la primera cuenta por defecto
+          const ct = cl.cuentas[0];
+          this.conCBU.push({
+            cliente_id:   cl.id,
+            cuenta_id:    ct.id,
+            nombre:       cl.nombre,
+            apellido:     cl.apellido,
+            id_ep:        cl.identificador_cliente,
+            id_cuenta:    ct.identificador_cuenta,
+            alias:        ct.alias,
+            importe:      '',
+            seleccionado: true,
+            cuentas:      cl.cuentas,
+          });
+        } else {
+          this.sinCBU.push(cl);
+        }
+      });
+    },
+
+    get seleccionados() {
+      return this.conCBU.filter(r => r.seleccionado);
+    },
+
+    get totalImporte() {
+      return this.seleccionados.reduce((a, r) => a + (parseFloat(r.importe) || 0), 0);
+    },
+
+    seleccionarTodos()   { this.conCBU.forEach(r => r.seleccionado = true);  },
+    deseleccionarTodos() { this.conCBU.forEach(r => r.seleccionado = false); },
+
+    aplicarImporteGlobal() {
+      if (this.config.importe) {
+        this.conCBU.forEach(r => r.importe = this.config.importe);
+      }
+    },
+
+    async ejecutarCobros() {
+      const sel = this.seleccionados;
+      if (sel.length === 0) return;
+
+      const sinImporte = sel.filter(r => !r.importe || parseFloat(r.importe) <= 0);
+      if (sinImporte.length > 0) {
+        showToast(`${sinImporte.length} cliente(s) sin importe definido`, 'error'); return;
+      }
+      if (this.config.tipo === 'programado' && !this.config.fecha_cobro) {
+        showToast('Elegí una fecha de cobro para el tipo programado', 'error'); return;
+      }
+
+      this.ejecutando  = true;
+      this.progreso    = 0;
+      this.resultados  = [];
+      this.exitosos    = 0;
+      this.fallidos    = 0;
+
+      try {
+        const body = {
+          descripcion:  this.config.descripcion || 'Cobro recurrente',
+          tipo:         this.config.tipo,
+          fecha_cobro:  this.config.tipo === 'programado' ? this.config.fecha_cobro : null,
+          cobros: sel.map(r => ({
+            cliente_id: r.cliente_id,
+            cuenta_id:  r.cuenta_id,
+            importe:    parseFloat(r.importe),
+          })),
+        };
+
+        const res = await fetch('/api/cobros/masivo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Error al procesar', 'error'); return; }
+
+        this.resultados = data.resultados;
+        this.exitosos   = data.exitosos;
+        this.fallidos   = data.fallidos;
+        this.progreso   = data.total;
+
+        showToast(`✅ ${data.exitosos} cobro(s) enviados${data.fallidos ? ' · ⚠️ ' + data.fallidos + ' fallido(s)' : ''}`);
+      } catch (e) {
+        showToast('Error de conexión: ' + e.message, 'error');
+      } finally {
+        this.ejecutando = false;
+      }
+    },
+
+    fmtMonto(v) {
+      return Number(v || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    },
+  };
+}
+</script>
+{% endblock %}
