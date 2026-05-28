@@ -698,21 +698,23 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
         cliente = db.get(Cliente, cliente_id)
         if not cliente:
             return JSONResponse({"error": "Cliente no encontrado"}, status_code=404)
-        # Registrar en ePagos
+        # Verificar duplicado antes de llamar a ePagos
+        existe = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
+        if existe:
+            return JSONResponse({"error": "Ese CBU ya está registrado"}, status_code=409)
+
+        # Intentar registrar en ePagos (best-effort: puede no existir en sandbox)
+        epagos_advertencia = None
         try:
             ep = _epagos()
             ep.registrar_cuenta_cliente(
                 identificador_cliente=cliente.identificador_cliente,
                 cbu=cbu,
             )
-        except EpagosError as e:
-            return JSONResponse({"error": f"ePagos: {e}"}, status_code=502)
-        except Exception as exc:
-            return JSONResponse({"error": f"Error al conectar con ePagos: {exc}"}, status_code=502)
-        # Guardar en BD local
-        existe = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
-        if existe:
-            return JSONResponse({"error": "Ese CBU ya está registrado"}, status_code=409)
+        except (EpagosError, Exception) as exc:
+            epagos_advertencia = str(exc)
+
+        # Guardar en BD local siempre (con o sin confirmación de ePagos)
         id_cuenta = f"CBU-{cbu[-8:]}"
         nueva = Cuenta(
             cliente_id=cliente_id,
@@ -725,6 +727,7 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
         db.refresh(nueva)
         return {
             "ok": True,
+            "advertencia": epagos_advertencia,
             "cuenta": {
                 "id": nueva.id,
                 "identificador_cuenta": nueva.identificador_cuenta,
