@@ -609,6 +609,28 @@ def api_sync_cbu(request: Request, cliente_id: int):
             return JSONResponse({"error": str(e)}, status_code=502)
 
 
+@router.post("/api/clientes/{cliente_id}/link_adhesion")
+def api_link_adhesion(request: Request, cliente_id: int):
+    err = _api_require_auth(request)
+    if err:
+        return err
+    with get_session() as db:
+        cliente = db.get(Cliente, cliente_id)
+        if not cliente:
+            return JSONResponse({"error": "Cliente no encontrado"}, status_code=404)
+        try:
+            ep = _epagos()
+            url = ep.generar_link_adhesion(
+                identificador_cliente = cliente.identificador_cliente,
+                email_pagador         = cliente.email or "sin@email.com",
+                importe               = 1.0,
+                descripcion           = "Adhesión débito directo",
+            )
+            return {"ok": True, "url": url}
+        except EpagosError as e:
+            return JSONResponse({"error": str(e)}, status_code=502)
+
+
 @router.get("/api/cobros")
 def api_listar_cobros(request: Request, estado: Optional[str] = None):
     err = _api_require_auth(request)

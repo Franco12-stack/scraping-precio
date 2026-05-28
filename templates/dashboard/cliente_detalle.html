@@ -55,6 +55,13 @@
                   <span class="spinner-border spinner-sm me-1" role="status"></span>Sincronizando…
                 </span>
               </button>
+              <!-- Link adhesión CBU -->
+              <button class="btn btn-warning btn-sm"
+                      @click="generarLinkAdhesion()"
+                      :disabled="generandoLink">
+                <span x-show="!generandoLink"><i class="bi bi-link-45deg me-1"></i>Link adhesión CBU</span>
+                <span x-show="generandoLink"><span class="spinner-border spinner-sm me-1"></span>Generando…</span>
+              </button>
               <!-- Generar cobro -->
               <button class="btn btn-success btn-sm"
                       @click="mostrarFormCobro = !mostrarFormCobro">
@@ -71,6 +78,25 @@
           </div>
         </div>
       </div>
+
+      <!-- Link adhesión generado -->
+      <template x-if="linkAdhesion">
+        <div class="alert alert-warning d-flex align-items-start gap-3 mt-3">
+          <i class="bi bi-link-45deg fs-5 mt-1"></i>
+          <div class="w-100">
+            <strong>Link de adhesión CBU (sandbox)</strong> — enviáselo al cliente para que ingrese su CBU:
+            <div class="input-group mt-2">
+              <input type="text" class="form-control form-control-sm font-monospace"
+                     :value="linkAdhesion" readonly>
+              <button class="btn btn-outline-secondary btn-sm"
+                      @click="navigator.clipboard.writeText(linkAdhesion); showToast('Link copiado')">
+                <i class="bi bi-clipboard"></i> Copiar
+              </button>
+            </div>
+            <div class="form-text">Una vez que el cliente complete la adhesión, hacé clic en <strong>Sincronizar CBU</strong>.</div>
+          </div>
+        </div>
+      </template>
 
       <!-- Panel: Generar cobro -->
       <div x-show="mostrarFormCobro" x-transition class="card shadow-sm border-success border-opacity-50 mb-4">
@@ -230,6 +256,8 @@ function clienteDetalleApp() {
     cargando: false,
     errorGeneral: null,
     sincronizando: false,
+    generandoLink: false,
+    linkAdhesion: null,
     eliminando: false,
     mostrarFormCobro: false,
     enviandoCobro: false,
@@ -287,6 +315,22 @@ function clienteDetalleApp() {
         showToast('Error de red al sincronizar CBU', 'error');
       } finally {
         this.sincronizando = false;
+      }
+    },
+
+    async generarLinkAdhesion() {
+      this.generandoLink = true;
+      this.linkAdhesion = null;
+      try {
+        const res = await fetch('/api/clientes/' + this.clienteId + '/link_adhesion', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Error al generar link', 'error'); return; }
+        this.linkAdhesion = data.url;
+        showToast('Link generado. Copialo y enviáselo al cliente.');
+      } catch (e) {
+        showToast('Error de red: ' + e.message, 'error');
+      } finally {
+        this.generandoLink = false;
       }
     },
 

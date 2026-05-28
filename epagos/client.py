@@ -338,6 +338,80 @@ class EpagosClient:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    # Link de adhesión (primera vez que el cliente registra su CBU)
+    # ------------------------------------------------------------------
+
+    def generar_link_adhesion(
+        self,
+        identificador_cliente: str,
+        email_pagador:         str,
+        importe:               float,
+        descripcion:           str = "Adhesión débito directo",
+        url_ok:                str = "",
+        url_error:             str = "",
+    ) -> str:
+        """
+        Genera un link de pago con fp_permitidas=42 (solo débito directo).
+        El cliente accede a ese link, ingresa su CBU y queda adherido.
+        Devuelve la URL completa de la página de pago de ePagos.
+        """
+        import uuid
+        nop = str(uuid.uuid4()).replace("-", "")[:20].upper()
+
+        DatosOrg   = self._tipo("DatosOrganismoPago")
+        DetallePago = self._tipo("DetallePago")
+        IdentPag   = self._tipo("IdentificacionPagador")
+        DomPag     = self._tipo("DomicilioPagador")
+        TelPag     = self._tipo("TelefonoPagador")
+        DatosPag   = self._tipo("DatosPagadorPago")
+        DatosOp    = self._tipo("DatosOperacionPago")
+
+        pagador = DatosPag(
+            nombre_pagador         = "Cliente",
+            apellido_pagador       = "Adhesion",
+            fechanac_pagador       = date(1900, 1, 1),
+            email_pagador          = email_pagador,
+            identificacion_pagador = IdentPag(tipo_doc_pagador=96, numero_doc_pagador=0, cuit_doc_pagador=0),
+            domicilio_pagador      = DomPag(calle_dom_pagador="", numero_dom_pagador="",
+                                            adicional_dom_pagador="", cp_dom_pagador="",
+                                            ciudad_dom_pagador="", provincia_dom_pagador=1, pais_dom_pagador=54),
+            telefono_pagador       = TelPag(codigo_telef_pagador=0, numero_telef_pagador=0),
+            cbu_pagador            = "",
+        )
+
+        operacion = DatosOp(
+            numero_operacion        = nop,
+            identificador_externo_2 = "",
+            identificador_externo_3 = "",
+            id_moneda_operacion     = 1,
+            monto_operacion         = float(importe),
+            opc_pdf                 = False,
+            opc_fecha_vencimiento   = date(2099, 12, 31),
+            descripcion_operacion   = descripcion,
+            detalle_pago            = [DetallePago(descripcion_detalle=descripcion,
+                                                    monto_detalle=float(importe),
+                                                    cantidad_detalle=1)],
+            datos_pagador           = pagador,
+        )
+
+        org = DatosOrg(
+            id_organismo        = self.id_organismo,
+            token               = self._token_valido(),
+            tipo_operacion      = "1",
+            url_ok              = url_ok or "",
+            url_error           = url_error or "",
+            identificador_cliente      = identificador_cliente,
+            opc_guardado_obligatorio   = 1,
+            fp_permitidas              = "42",
+        )
+
+        resp = self._soap.service.solicitud_pago(API_VERSION, org, operacion)
+        self._validar(resp.id_resp, resp.respuesta)
+
+        base = "https://sandbox.epagos.com.ar" if self.entorno == "sandbox" else "https://www.epagos.com.ar"
+        return f"{base}/pago/?id_pago={resp.id_pago}"
+
+    # ------------------------------------------------------------------
 
     _ERROR_PREFIXES = ("02", "03")
 
