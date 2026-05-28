@@ -370,20 +370,20 @@ class EpagosClient:
         url_error:             str = "",
     ) -> str:
         """
-        Genera un link de pago con fp_permitidas=42 (solo débito directo).
-        El cliente accede a ese link, ingresa su CBU y queda adherido.
-        Devuelve la URL completa de la página de pago de ePagos.
+        Genera un link de pago restringido a débito directo (fp=42).
+        El cliente ingresa su CBU y queda adherido en ePagos.
+        Firma real: solicitud_pago(version, tipo_op, credenciales, operacion, fp[], convenio)
         """
         import uuid
         nop = str(uuid.uuid4()).replace("-", "")[:20].upper()
 
-        DatosOrg   = self._tipo("DatosOrganismoPago")
-        DetallePago = self._tipo("DetallePago")
-        IdentPag   = self._tipo("IdentificacionPagador")
-        DomPag     = self._tipo("DomicilioPagador")
-        TelPag     = self._tipo("TelefonoPagador")
-        DatosPag   = self._tipo("DatosPagadorPago")
-        DatosOp    = self._tipo("DatosOperacionPago")
+        DetallePago  = self._tipo("DetallePago")
+        IdentPag     = self._tipo("IdentificacionPagador")
+        DomPag       = self._tipo("DomicilioPagador")
+        TelPag       = self._tipo("TelefonoPagador")
+        DatosPag     = self._tipo("DatosPagadorPago")
+        DatosOp      = self._tipo("DatosOperacionPago")
+        FormaPago    = self._tipo("DatosFormaPago")
 
         pagador = DatosPag(
             nombre_pagador         = "Cliente",
@@ -400,35 +400,38 @@ class EpagosClient:
 
         operacion = DatosOp(
             numero_operacion        = nop,
-            identificador_externo_2 = "",
+            identificador_externo_2 = identificador_cliente,
             identificador_externo_3 = "",
             id_moneda_operacion     = 1,
             monto_operacion         = float(importe),
             opc_pdf                 = False,
             opc_fecha_vencimiento   = date(2099, 12, 31),
-            descripcion_operacion   = descripcion,
-            detalle_pago            = [DetallePago(descripcion_detalle=descripcion,
-                                                    monto_detalle=float(importe),
-                                                    cantidad_detalle=1)],
-            datos_pagador           = pagador,
+            opc_devolver_qr         = False,
+            opc_devolver_codbarras  = False,
+            detalle_operacion       = [DetallePago(
+                id_item     = 1,
+                desc_item   = descripcion or "Adhesión débito directo",
+                monto_item  = float(importe),
+                cantidad_item = 1,
+            )],
+            pagador = pagador,
         )
 
-        org = DatosOrg(
-            id_organismo        = self.id_organismo,
-            token               = self._token_valido(),
-            tipo_operacion      = "1",
-            url_ok              = url_ok or "",
-            url_error           = url_error or "",
-            identificador_cliente      = identificador_cliente,
-            opc_guardado_obligatorio   = 1,
-            fp_permitidas              = "42",
-        )
+        # fp=42 → débito directo CBU (restringe a ese medio)
+        fp = [FormaPago(id_fp=42, monto_fp=float(importe), tarjeta=None)]
 
-        resp = self._soap.service.solicitud_pago(API_VERSION, org, operacion)
+        resp = self._soap.service.solicitud_pago(
+            API_VERSION,        # version
+            "1",                # tipo_operacion
+            self._creds_pago(), # credenciales (id_organismo + token)
+            operacion,          # DatosOperacionPago
+            fp,                 # DatosFormaPagoArray
+            self.convenio,      # convenio
+        )
         self._validar(resp.id_resp, resp.respuesta)
 
         base = "https://sandbox.epagos.com.ar" if self.entorno == "sandbox" else "https://www.epagos.com.ar"
-        return f"{base}/pago/?id_pago={resp.id_pago}"
+        return f"{base}/pago/?id_pago={resp.id_transaccion}"
 
     # ------------------------------------------------------------------
 
