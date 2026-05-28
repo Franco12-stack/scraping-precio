@@ -364,11 +364,7 @@ function clienteDetalleApp() {
         this.cliente.cuentas.push(data.cuenta);
         this.formCBU = { cbu: '', alias: '' };
         this.mostrarFormCBU = false;
-        if (data.advertencia) {
-          showToast('CBU guardado localmente. ePagos: ' + data.advertencia, 'error');
-        } else {
-          showToast('✅ CBU registrado correctamente');
-        }
+        showToast('✅ CBU guardado correctamente');
       } catch (e) {
         showToast('Error de red: ' + e.message, 'error');
       } finally {

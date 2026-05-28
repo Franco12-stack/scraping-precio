@@ -284,9 +284,6 @@ function clientesApp() {
             return;
           }
           data.num_cuentas = 1;
-          if (dataCBU.advertencia) {
-            showToast('CBU guardado localmente. Advertencia ePagos: ' + dataCBU.advertencia, 'error');
-          }
         }
 
         const guardoCBU = this.form.tieneCBU && this.form.cbu;
