@@ -384,6 +384,7 @@ class EpagosClient:
         DatosPag     = self._tipo("DatosPagadorPago")
         DatosOp      = self._tipo("DatosOperacionPago")
         FormaPago    = self._tipo("DatosFormaPago")
+        FpArray      = self._tipo("DatosFormaPagoArray")
 
         pagador = DatosPag(
             nombre_pagador         = "Cliente",
@@ -417,8 +418,8 @@ class EpagosClient:
             pagador = pagador,
         )
 
-        # fp=42 → débito directo CBU (restringe a ese medio)
-        fp = [FormaPago(id_fp=42, monto_fp=float(importe), tarjeta=None)]
+        # fp=42 → débito directo CBU; FpArray([...]) es la sintaxis correcta para ArrayValue
+        fp = FpArray([FormaPago(id_fp=42, monto_fp=float(importe))])
 
         resp = self._soap.service.solicitud_pago(
             API_VERSION,        # version
