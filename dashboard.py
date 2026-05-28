@@ -678,6 +678,55 @@ def api_link_adhesion(request: Request, cliente_id: int):
             return JSONResponse({"error": str(e)}, status_code=502)
 
 
+@router.post("/api/clientes/{cliente_id}/agregar_cbu")
+async def api_agregar_cbu(request: Request, cliente_id: int):
+    err = _api_require_auth(request)
+    if err:
+        return err
+    body = await request.json()
+    cbu = (body.get("cbu") or "").strip().replace(" ", "")
+    alias = (body.get("alias") or "").strip()
+    if not cbu or len(cbu) != 22 or not cbu.isdigit():
+        return JSONResponse({"error": "El CBU debe tener exactamente 22 dígitos"}, status_code=400)
+    with get_session() as db:
+        cliente = db.get(Cliente, cliente_id)
+        if not cliente:
+            return JSONResponse({"error": "Cliente no encontrado"}, status_code=404)
+        # Registrar en ePagos
+        try:
+            ep = _epagos()
+            ep.registrar_cuenta_cliente(
+                identificador_cliente=cliente.identificador_cliente,
+                cbu=cbu,
+            )
+        except EpagosError as e:
+            return JSONResponse({"error": f"ePagos: {e}"}, status_code=502)
+        # Guardar en BD local
+        existe = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
+        if existe:
+            return JSONResponse({"error": "Ese CBU ya está registrado"}, status_code=409)
+        id_cuenta = f"CBU-{cbu[-8:]}"
+        nueva = Cuenta(
+            cliente_id=cliente_id,
+            identificador_cuenta=id_cuenta,
+            alias=alias or f"CBU {cbu[-4:]}",
+            cbu=cbu,
+        )
+        db.add(nueva)
+        db.commit()
+        db.refresh(nueva)
+        return {
+            "ok": True,
+            "cuenta": {
+                "id": nueva.id,
+                "identificador_cuenta": nueva.identificador_cuenta,
+                "alias": nueva.alias,
+                "cbu": nueva.cbu,
+                "sincronizado_en": nueva.sincronizado_en.isoformat(),
+            }
+        }
+
+
 @router.get("/api/cobros")
 def api_listar_cobros(request: Request, estado: Optional[str] = None):
     err = _api_require_auth(request)

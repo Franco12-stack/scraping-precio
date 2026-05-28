@@ -164,7 +164,33 @@
       <div class="card shadow-sm border-0 mb-4">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
           <span class="fw-semibold">Cuentas CBU/CVU registradas</span>
-          <span class="badge bg-primary rounded-pill" x-text="cliente.cuentas.length"></span>
+          <div class="d-flex gap-2 align-items-center">
+            <span class="badge bg-primary rounded-pill" x-text="cliente.cuentas.length"></span>
+            <button class="btn btn-outline-success btn-sm" @click="mostrarFormCBU = !mostrarFormCBU">
+              <i class="bi bi-plus-lg me-1"></i>Agregar CBU
+            </button>
+          </div>
+        </div>
+        <!-- Formulario agregar CBU manual -->
+        <div x-show="mostrarFormCBU" x-transition class="card-body border-bottom bg-light">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+              <label class="form-label small fw-semibold">CBU (22 dígitos)</label>
+              <input x-model="formCBU.cbu" class="form-control font-monospace"
+                     placeholder="0720461288000012345678" maxlength="22">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Alias (opcional)</label>
+              <input x-model="formCBU.alias" class="form-control" placeholder="Banco Nación">
+            </div>
+            <div class="col-md-3">
+              <button class="btn btn-success w-100" @click="agregarCBU()" :disabled="agregandoCBU">
+                <span x-show="!agregandoCBU"><i class="bi bi-check2 me-1"></i>Guardar CBU</span>
+                <span x-show="agregandoCBU"><span class="spinner-border spinner-border-sm me-1"></span>Guardando…</span>
+              </button>
+            </div>
+          </div>
+          <div class="form-text mt-1">El CBU se registra directamente en ePagos sin necesidad de adhesión web.</div>
         </div>
         <div class="card-body p-0">
           <table class="table table-hover mb-0">
@@ -258,6 +284,9 @@ function clienteDetalleApp() {
     sincronizando: false,
     generandoLink: false,
     linkAdhesion: null,
+    mostrarFormCBU: false,
+    agregandoCBU: false,
+    formCBU: { cbu: '', alias: '' },
     eliminando: false,
     mostrarFormCobro: false,
     enviandoCobro: false,
@@ -315,6 +344,31 @@ function clienteDetalleApp() {
         showToast('Error de red al sincronizar CBU', 'error');
       } finally {
         this.sincronizando = false;
+      }
+    },
+
+    async agregarCBU() {
+      const cbu = this.formCBU.cbu.trim();
+      if (!/^\d{22}$/.test(cbu)) {
+        showToast('El CBU debe tener exactamente 22 dígitos numéricos', 'error'); return;
+      }
+      this.agregandoCBU = true;
+      try {
+        const res = await fetch('/api/clientes/' + this.clienteId + '/agregar_cbu', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.formCBU),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Error al agregar CBU', 'error'); return; }
+        this.cliente.cuentas.push(data.cuenta);
+        this.formCBU = { cbu: '', alias: '' };
+        this.mostrarFormCBU = false;
+        showToast('✅ CBU registrado correctamente');
+      } catch (e) {
+        showToast('Error de red: ' + e.message, 'error');
+      } finally {
+        this.agregandoCBU = false;
       }
     },
 

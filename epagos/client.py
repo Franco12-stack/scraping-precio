@@ -159,6 +159,25 @@ class EpagosClient:
                 cuentas.append(self._to_dict(cuenta))
         return cuentas
 
+    def registrar_cuenta_cliente(
+        self,
+        identificador_cliente: str,
+        cbu: str,
+        tipo_operacion: str = "1",
+    ) -> dict:
+        """Registra un CBU/CVU directamente para un cliente (sin adhesión web)."""
+        resp = self._soap.service.registrar_cuentas_cliente(
+            API_VERSION,
+            self._creds_pago(),
+            [{
+                "identificador_cliente": identificador_cliente,
+                "cbu":                   cbu,
+                "tipo_operacion":        tipo_operacion,
+            }],
+        )
+        self._validar(resp.id_resp, resp.respuesta)
+        return self._to_dict(resp)
+
     def obtener_tarjetas_cliente(self, identificador_cliente: str) -> list[dict]:
         """Devuelve las tarjetas de crédito/débito registradas para un cliente."""
         resp = self._soap.service.obtener_tarjetas_cliente(
