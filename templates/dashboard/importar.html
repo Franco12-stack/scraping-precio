@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Importar clientes — ePagos{% endblock %}
+
+{% block content %}
+<div x-data="importarApp()" x-init="init()" x-cloak>
+
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h4 class="fw-bold mb-0"><i class="bi bi-file-earmark-arrow-up me-2"></i>Importar clientes desde Excel / CSV</h4>
+      <small class="text-muted">Cargá masivamente clientes y sus CBU desde una planilla</small>
+    </div>
+    <a href="/api/importar_clientes/template" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-download me-1"></i>Descargar plantilla CSV
+    </a>
+  </div>
+
+  <!-- Instrucciones -->
+  <div class="alert alert-info border-0 mb-4" role="alert">
+    <div class="fw-semibold mb-1"><i class="bi bi-info-circle me-1"></i>Columnas esperadas</div>
+    <div class="small font-monospace">
+      <strong>Obligatorias:</strong> nombre · apellido · email · dni · cuit<br>
+      <strong>Opcionales:</strong> identificador_cliente · cbu (22 dígitos) · alias
+    </div>
+    <div class="small mt-1 text-muted">
+      Formatos soportados: <strong>.xlsx</strong> y <strong>.csv</strong> (separado por comas).<br>
+      Si <em>identificador_cliente</em> no viene, se genera automáticamente como <code>CLI-{dni}</code>.<br>
+      Si el cliente ya existe (mismo identificador o DNI), se omite la creación pero se agrega el CBU si es nuevo.
+    </div>
+  </div>
+
+  <!-- Zona de carga -->
+  <div class="card shadow-sm border-0 mb-4">
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+
+        <!-- Drop zone -->
+        <div class="col-md-6">
+          <label class="form-label small fw-semibold">Archivo Excel o CSV</label>
+          <div
+            class="border rounded p-4 text-center"
+            :class="archivo ? 'border-success bg-light' : 'border-dashed'"
+            style="cursor:pointer; border-style: dashed !important;"
+            @click="$refs.fileInput.click()"
+            @dragover.prevent
+            @drop.prevent="onDrop($event)"
+          >
+            <template x-if="!archivo">
+              <div>
+                <i class="bi bi-cloud-upload fs-2 text-muted"></i>
+                <p class="mb-0 text-muted small mt-2">Arrastrá un archivo acá o hacé clic para seleccionar</p>
+                <p class="mb-0 text-muted" style="font-size:.75rem">.xlsx · .csv</p>
+              </div>
+            </template>
+            <template x-if="archivo">
+              <div>
+                <i class="bi bi-file-earmark-check fs-2 text-success"></i>
+                <p class="mb-1 fw-semibold mt-2" x-text="archivo.name"></p>
+                <p class="mb-0 text-muted small" x-text="(archivo.size/1024).toFixed(1) + ' KB'"></p>
+              </div>
+            </template>
+          </div>
+          <input type="file" x-ref="fileInput" class="d-none" accept=".xlsx,.csv,.xls"
+                 @change="onFileSelect($event)">
+        </div>
+
+        <!-- Opciones -->
+        <div class="col-md-4">
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="chkEpagos" x-model="registrarEpagos">
+            <label class="form-check-label small" for="chkEpagos">
+              <strong>Registrar CBU en ePagos</strong>
+              <div class="text-muted" style="font-size:.75rem">
+                Llama a la API de ePagos por cada CBU. Puede ser más lento pero es necesario para cobrar.
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="col-md-2 d-flex align-items-end">
+          <button class="btn btn-primary w-100"
+                  @click="importar()"
+                  :disabled="!archivo || cargando">
+            <span x-show="!cargando"><i class="bi bi-upload me-1"></i>Importar</span>
+            <span x-show="cargando">
+              <span class="spinner-border spinner-border-sm me-1"></span>Procesando…
+            </span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Resumen resultado -->
+  <template x-if="resultado">
+    <div>
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="display-6 fw-bold text-primary" x-text="resultado.total"></div>
+            <div class="small text-muted">Filas procesadas</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="display-6 fw-bold text-success" x-text="resultado.ok"></div>
+            <div class="small text-muted">Exitosas</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="display-6 fw-bold text-danger" x-text="resultado.errores"></div>
+            <div class="small text-muted">Con error</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabla de resultados -->
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Detalle por fila</span>
+          <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary btn-sm" @click="filtro = ''"
+                    :class="filtro === '' ? 'active' : ''">Todos</button>
+            <button class="btn btn-outline-success btn-sm" @click="filtro = 'ok'"
+                    :class="filtro === 'ok' ? 'active' : ''">Solo OK</button>
+            <button class="btn btn-outline-danger btn-sm" @click="filtro = 'error'"
+                    :class="filtro === 'error' ? 'active' : ''">Solo errores</button>
+          </div>
+        </div>
+        <div class="card-body p-0" style="max-height:500px; overflow-y:auto;">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th class="ps-3" style="width:60px">Fila</th>
+                <th>Cliente</th>
+                <th>Identificador</th>
+                <th>Acción cliente</th>
+                <th>CBU</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="r in resultadosFiltrados" :key="r.fila">
+                <tr :class="r.estado === 'error' ? 'table-danger' : ''">
+                  <td class="ps-3 text-muted small" x-text="r.fila"></td>
+                  <td class="fw-semibold" x-text="r.nombre"></td>
+                  <td class="font-monospace small" x-text="r.identificador"></td>
+                  <td>
+                    <span x-show="r.accion_cliente === 'creado'" class="badge bg-success">creado</span>
+                    <span x-show="r.accion_cliente !== 'creado' && r.accion_cliente" class="badge bg-secondary" x-text="r.accion_cliente"></span>
+                  </td>
+                  <td class="small">
+                    <span x-show="r.cbu_estado === 'CBU registrado'" class="text-success"><i class="bi bi-check2 me-1"></i>registrado</span>
+                    <span x-show="r.cbu_estado === 'CBU ya registrado'" class="text-muted"><i class="bi bi-dash me-1"></i>ya existía</span>
+                    <span x-show="r.cbu_estado && r.cbu_estado !== 'CBU registrado' && r.cbu_estado !== 'CBU ya registrado'" class="text-warning small" x-text="r.cbu_estado"></span>
+                    <span x-show="!r.cbu_estado" class="text-muted">—</span>
+                  </td>
+                  <td>
+                    <span x-show="r.estado === 'ok'" class="badge bg-success">OK</span>
+                    <span x-show="r.estado === 'error'" class="badge bg-danger" :title="r.error">
+                      error <i class="bi bi-question-circle"></i>
+                    </span>
+                    <div x-show="r.estado === 'error'" class="text-danger small mt-1" x-text="r.error"></div>
+                  </td>
+                </tr>
+              </template>
+              <template x-if="resultadosFiltrados.length === 0">
+                <tr><td colspan="6" class="text-center text-muted py-4">Sin resultados para mostrar.</td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </template>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function importarApp() {
+  return {
+    archivo: null,
+    registrarEpagos: true,
+    cargando: false,
+    resultado: null,
+    filtro: '',
+
+    init() {},
+
+    get resultadosFiltrados() {
+      if (!this.resultado) return [];
+      if (!this.filtro) return this.resultado.resultados;
+      return this.resultado.resultados.filter(r => r.estado === this.filtro);
+    },
+
+    onFileSelect(e) {
+      const f = e.target.files[0];
+      if (f) this.archivo = f;
+    },
+
+    onDrop(e) {
+      const f = e.dataTransfer.files[0];
+      if (f) this.archivo = f;
+    },
+
+    async importar() {
+      if (!this.archivo) return;
+      this.cargando = true;
+      this.resultado = null;
+      try {
+        const fd = new FormData();
+        fd.append('file', this.archivo);
+        fd.append('registrar_cbu', this.registrarEpagos ? '1' : '0');
+        const res = await fetch('/api/importar_clientes', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.error || 'Error al importar', 'error');
+          return;
+        }
+        this.resultado = data;
+        if (data.errores === 0) {
+          showToast(`✅ ${data.ok} cliente(s) importados correctamente`);
+        } else {
+          showToast(`⚠️ ${data.ok} OK · ${data.errores} con error`, 'error');
+        }
+      } catch (e) {
+        showToast('Error de red: ' + e.message, 'error');
+      } finally {
+        this.cargando = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

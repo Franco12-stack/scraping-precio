@@ -53,6 +53,11 @@
           </a>
         </li>
         <li class="nav-item">
+          <a class="nav-link {% if 'importar' in request.url.path %}active{% endif %}" href="/dashboard/importar">
+            <i class="bi bi-file-earmark-arrow-up me-2"></i>Importar Excel
+          </a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link {% if 'usuarios' in request.url.path %}active{% endif %}" href="/dashboard/usuarios">
             <i class="bi bi-people me-2"></i>Usuarios
           </a>

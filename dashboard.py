@@ -2,6 +2,7 @@
 Dashboard web para gestión de cobros ePagos.
 """
 import hashlib
+import io
 import os
 import secrets
 import uuid
@@ -11,8 +12,9 @@ from typing import Optional
 
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
-from fastapi import APIRouter, Request, Form, Depends, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import pandas as pd
+from fastapi import APIRouter, Request, Form, Depends, UploadFile, File, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 from sqlalchemy import func, extract
@@ -1053,3 +1055,196 @@ def api_eliminar_usuario(request: Request, usuario_id: int):
         db.delete(u)
         db.commit()
         return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Importación desde Excel / CSV
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard/importar", response_class=HTMLResponse)
+def importar_page(request: Request):
+    if not _get_current_user(request):
+        return _redirect_login()
+    return templates.TemplateResponse("dashboard/importar.html", {"request": request})
+
+
+@router.get("/api/importar_clientes/template")
+def descargar_template(request: Request):
+    """Devuelve un CSV de ejemplo para usar como plantilla de importación."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+    contenido = (
+        "nombre,apellido,email,dni,cuit,identificador_cliente,cbu,alias\n"
+        "Juan,Pérez,juan.perez@gmail.com,12345678,20123456789,CLI-12345678,0720461088000012345678,Cuenta Juan\n"
+        "María,González,maria.g@gmail.com,23456789,27234567890,CLI-23456789,,\n"
+    )
+    return StreamingResponse(
+        io.BytesIO(contenido.encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=plantilla_clientes.csv"},
+    )
+
+
+@router.post("/api/importar_clientes")
+async def api_importar_clientes(
+    request: Request,
+    file: UploadFile = File(...),
+    registrar_cbu: str = Form("1"),
+):
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    contents = await file.read()
+    filename = (file.filename or "").lower()
+
+    try:
+        if filename.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(contents), dtype=str, keep_default_na=False)
+        else:
+            df = pd.read_excel(io.BytesIO(contents), dtype=str, keep_default_na=False)
+    except Exception as exc:
+        return JSONResponse({"error": f"No se pudo leer el archivo: {exc}"}, status_code=400)
+
+    # Normalizar nombres de columnas
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+
+    required_cols = {"nombre", "apellido", "email", "dni", "cuit"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        encontradas = ", ".join(df.columns.tolist())
+        return JSONResponse(
+            {"error": f"Columnas faltantes: {', '.join(sorted(missing))}. Encontradas: {encontradas}"},
+            status_code=400,
+        )
+
+    usar_epagos = registrar_cbu == "1"
+    ep = _epagos() if usar_epagos else None
+
+    resultados = []
+
+    with get_session() as db:
+        for i, row in df.iterrows():
+            fila = int(i) + 2  # +1 encabezado +1 base-1
+
+            nombre   = str(row.get("nombre",   "")).strip()
+            apellido = str(row.get("apellido", "")).strip()
+            email    = str(row.get("email",    "")).strip()
+            dni_raw  = str(row.get("dni",      "")).strip().rstrip(".0")
+            cuit_raw = str(row.get("cuit",     "")).strip().rstrip(".0")
+            id_cliente = str(row.get("identificador_cliente", "")).strip()
+            cbu      = str(row.get("cbu",   "")).strip().replace(" ", "").rstrip(".0")
+            alias    = str(row.get("alias", "")).strip()
+
+            # Ignorar filas vacías
+            if not any([nombre, apellido, email, dni_raw, cuit_raw]):
+                continue
+
+            if not all([nombre, apellido, email, dni_raw, cuit_raw]):
+                resultados.append({
+                    "fila": fila, "nombre": f"{apellido}, {nombre}",
+                    "identificador": id_cliente, "estado": "error",
+                    "accion_cliente": "", "cbu_estado": "",
+                    "error": "Campos obligatorios vacíos (nombre, apellido, email, dni, cuit)",
+                })
+                continue
+
+            try:
+                dni  = int(float(dni_raw))
+                cuit = int(float(cuit_raw))
+            except ValueError:
+                resultados.append({
+                    "fila": fila, "nombre": f"{apellido}, {nombre}",
+                    "identificador": id_cliente, "estado": "error",
+                    "accion_cliente": "", "cbu_estado": "",
+                    "error": f"DNI '{dni_raw}' o CUIT '{cuit_raw}' no son números válidos",
+                })
+                continue
+
+            # Auto-generar identificador si no viene o es muy corto
+            if len(id_cliente) < 6:
+                id_cliente = f"CLI-{dni}"
+
+            # Crear o encontrar cliente
+            cliente_existente = db.query(Cliente).filter(
+                Cliente.identificador_cliente == id_cliente
+            ).first()
+
+            if cliente_existente:
+                cliente     = cliente_existente
+                accion_cliente = "ya existía"
+            else:
+                # Verificar DNI duplicado
+                por_dni = db.query(Cliente).filter(Cliente.dni == dni).first()
+                if por_dni:
+                    cliente     = por_dni
+                    accion_cliente = "ya existía (mismo DNI)"
+                else:
+                    cliente = Cliente(
+                        identificador_cliente=id_cliente,
+                        nombre=nombre, apellido=apellido,
+                        email=email, dni=dni, cuit=cuit,
+                    )
+                    db.add(cliente)
+                    db.flush()
+                    accion_cliente = "creado"
+
+            # Registrar CBU si viene
+            cbu_estado = ""
+            if cbu and len(cbu) == 22 and cbu.isdigit():
+                existe_cbu = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
+                if existe_cbu:
+                    cbu_estado = "CBU ya registrado"
+                else:
+                    try:
+                        if ep:
+                            ep.registrar_cuenta_cliente(
+                                identificador_cliente=cliente.identificador_cliente,
+                                cbu=cbu,
+                            )
+                        id_cuenta = f"CBU-{cbu[-8:]}"
+                        db.add(Cuenta(
+                            cliente_id=cliente.id,
+                            identificador_cuenta=id_cuenta,
+                            alias=alias or f"CBU {cbu[-4:]}",
+                            cbu=cbu,
+                        ))
+                        cbu_estado = "CBU registrado"
+                    except EpagosError as exc_ep:
+                        cbu_estado = f"CBU error ePagos: {exc_ep}"
+            elif cbu and cbu not in ("", "nan", "none"):
+                cbu_estado = f"CBU inválido ({len(cbu)} dígitos)"
+
+            try:
+                db.commit()
+            except Exception as exc_db:
+                db.rollback()
+                resultados.append({
+                    "fila": fila, "nombre": f"{apellido}, {nombre}",
+                    "identificador": id_cliente, "estado": "error",
+                    "accion_cliente": accion_cliente, "cbu_estado": cbu_estado,
+                    "error": f"Error BD: {exc_db}",
+                })
+                continue
+
+            resultados.append({
+                "fila": fila,
+                "nombre": f"{apellido}, {nombre}",
+                "identificador": id_cliente,
+                "estado": "ok",
+                "accion_cliente": accion_cliente,
+                "cbu_estado": cbu_estado,
+                "error": None,
+            })
+
+    total    = len(resultados)
+    ok_count = sum(1 for r in resultados if r["estado"] == "ok")
+    err_count = total - ok_count
+
+    return {
+        "total": total,
+        "ok": ok_count,
+        "errores": err_count,
+        "resultados": resultados,
+    }
