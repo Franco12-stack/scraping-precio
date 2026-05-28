@@ -703,19 +703,22 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
         if existe:
             return JSONResponse({"error": "Ese CBU ya está registrado"}, status_code=409)
 
-        # Intentar registrar en ePagos (best-effort: puede no existir en sandbox)
+        # Registrar en ePagos v2.1 — retorna el identificador_cuenta real
         epagos_advertencia = None
+        epagos_id_cuenta = None
         try:
             ep = _epagos()
-            ep.registrar_cuenta_cliente(
+            resultado = ep.registrar_cuenta_cliente(
                 identificador_cliente=cliente.identificador_cliente,
                 cbu=cbu,
+                cuit=cliente.cuit,
             )
+            epagos_id_cuenta = resultado.get("identificador_cuenta") or None
         except (EpagosError, Exception) as exc:
             epagos_advertencia = str(exc)
 
-        # Guardar en BD local siempre (con o sin confirmación de ePagos)
-        id_cuenta = f"CBU-{cbu[-8:]}"
+        # Usar el id asignado por ePagos o generar uno local como fallback
+        id_cuenta = epagos_id_cuenta or f"CBU-{cbu[-8:]}"
         nueva = Cuenta(
             cliente_id=cliente_id,
             identificador_cuenta=id_cuenta,
@@ -1218,12 +1221,14 @@ async def api_importar_clientes(
                     cbu_estado = "CBU ya registrado"
                 else:
                     try:
+                        id_cuenta = f"CBU-{cbu[-8:]}"
                         if ep:
-                            ep.registrar_cuenta_cliente(
+                            res_cbu = ep.registrar_cuenta_cliente(
                                 identificador_cliente=cliente.identificador_cliente,
                                 cbu=cbu,
+                                cuit=cliente.cuit,
                             )
-                        id_cuenta = f"CBU-{cbu[-8:]}"
+                            id_cuenta = res_cbu.get("identificador_cuenta") or id_cuenta
                         db.add(Cuenta(
                             cliente_id=cliente.id,
                             identificador_cuenta=id_cuenta,
@@ -1231,8 +1236,15 @@ async def api_importar_clientes(
                             cbu=cbu,
                         ))
                         cbu_estado = "CBU registrado"
-                    except EpagosError as exc_ep:
-                        cbu_estado = f"CBU error ePagos: {exc_ep}"
+                    except (EpagosError, Exception) as exc_ep:
+                        id_cuenta = f"CBU-{cbu[-8:]}"
+                        db.add(Cuenta(
+                            cliente_id=cliente.id,
+                            identificador_cuenta=id_cuenta,
+                            alias=alias or f"CBU {cbu[-4:]}",
+                            cbu=cbu,
+                        ))
+                        cbu_estado = f"CBU guardado local (ePagos: {exc_ep})"
             elif cbu and cbu not in ("", "nan", "none"):
                 cbu_estado = f"CBU inválido ({len(cbu)} dígitos)"
 

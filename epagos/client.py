@@ -9,7 +9,12 @@ from requests import Session
 WSDL_PRODUCCION = "https://api.epagos.com.ar/wsdl/index.php?wsdl"
 WSDL_SANDBOX    = "https://sandbox.epagos.com.ar/wsdl/index.php?wsdl"
 
-API_VERSION = "3.0"
+# v2.1 endpoints — tienen registrar_cuentas_cliente que v3.0 no expone
+WSDL_PRODUCCION_V2 = "https://api.epagos.com/wsdl/2.1/index.php?wsdl"
+WSDL_SANDBOX_V2    = "https://sandbox.epagos.com/wsdl/2.1/index.php?wsdl"
+
+API_VERSION    = "3.0"
+API_VERSION_V2 = "2.0"
 
 # Valores válidos del enum MedioRecurrente
 MEDIO_TARJETA        = "op_pago_recurrente_medio_tarjeta"
@@ -78,6 +83,7 @@ class EpagosClient:
         settings = Settings(strict=False, xml_huge_tree=True)
         self._soap = Client(wsdl, settings=settings, transport=Transport(session=Session()))
         self._token: Optional[str] = None
+        self._soap_v2: Optional[Any] = None   # lazy — solo para registrar_cuentas_cliente
 
         # Tipos WSDL cacheados
         self._t = {}
@@ -159,24 +165,46 @@ class EpagosClient:
                 cuentas.append(self._to_dict(cuenta))
         return cuentas
 
+    def _v2(self):
+        """Cliente SOAP v2.1 (carga perezosa). Necesario para registrar_cuentas_cliente."""
+        if self._soap_v2 is None:
+            wsdl = WSDL_SANDBOX_V2 if self.entorno == "sandbox" else WSDL_PRODUCCION_V2
+            settings = Settings(strict=False, xml_huge_tree=True)
+            self._soap_v2 = Client(wsdl, settings=settings, transport=Transport(session=Session()))
+        return self._soap_v2
+
     def registrar_cuenta_cliente(
         self,
         identificador_cliente: str,
         cbu: str,
-        tipo_operacion: str = "1",
+        cuit: int = 0,
+        tipo_operacion: int = 1,
     ) -> dict:
-        """Registra un CBU/CVU directamente para un cliente (sin adhesión web)."""
-        resp = self._soap.service.registrar_cuentas_cliente(
-            API_VERSION,
-            self._creds_pago(),
+        """
+        Registra un CBU directamente para un cliente (sin adhesión web).
+        Usa la API v2.1 que expone registrar_cuentas_cliente.
+        Retorna {"identificador_cuenta": "..."} asignado por ePagos.
+        """
+        resp = self._v2().service.registrar_cuentas_cliente(
+            API_VERSION_V2,
+            {"id_organismo": self.id_organismo, "token": self._token_valido()},
             [{
                 "identificador_cliente": identificador_cliente,
-                "cbu":                   cbu,
                 "tipo_operacion":        tipo_operacion,
+                "cuit":                  cuit,
+                "cbu":                   cbu,
+                "fecha_adhesion":        date.today(),
             }],
         )
         self._validar(resp.id_resp, resp.respuesta)
-        return self._to_dict(resp)
+        # La respuesta trae ArrayCuentasClienteGeneradas — extraer identificador_cuenta
+        for item in (resp.cuentas or []):
+            id_cuenta = getattr(item, "identificador_cuenta", None) or (
+                item.get("identificador_cuenta") if isinstance(item, dict) else None
+            )
+            if id_cuenta:
+                return {"identificador_cuenta": str(id_cuenta)}
+        return {"identificador_cuenta": ""}
 
     def obtener_tarjetas_cliente(self, identificador_cliente: str) -> list[dict]:
         """Devuelve las tarjetas de crédito/débito registradas para un cliente."""
