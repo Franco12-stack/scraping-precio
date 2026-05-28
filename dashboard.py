@@ -656,6 +656,8 @@ def api_sync_cbu(request: Request, cliente_id: int):
             return {"ok": True, "nuevas": nuevas, "cuentas": cuentas_data}
         except EpagosError as e:
             return JSONResponse({"error": str(e)}, status_code=502)
+        except Exception as exc:
+            return JSONResponse({"error": f"Error al conectar con ePagos: {exc}"}, status_code=502)
 
 
 @router.post("/api/clientes/{cliente_id}/link_adhesion")
@@ -678,6 +680,8 @@ def api_link_adhesion(request: Request, cliente_id: int):
             return {"ok": True, "url": url}
         except EpagosError as e:
             return JSONResponse({"error": str(e)}, status_code=502)
+        except Exception as exc:
+            return JSONResponse({"error": f"Error al conectar con ePagos: {exc}"}, status_code=502)
 
 
 @router.post("/api/clientes/{cliente_id}/agregar_cbu")
@@ -703,6 +707,8 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
             )
         except EpagosError as e:
             return JSONResponse({"error": f"ePagos: {e}"}, status_code=502)
+        except Exception as exc:
+            return JSONResponse({"error": f"Error al conectar con ePagos: {exc}"}, status_code=502)
         # Guardar en BD local
         existe = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
         if existe:
@@ -831,6 +837,9 @@ async def api_crear_cobro(request: Request):
         except EpagosError as e:
             cobro.estado = "error"
             cobro.error = str(e)
+        except Exception as exc:
+            cobro.estado = "error"
+            cobro.error = f"Error al conectar con ePagos: {exc}"
 
         db.commit()
         return JSONResponse({
@@ -964,6 +973,14 @@ async def api_cobros_masivo(request: Request):
                                     "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
                                     "importe": float(importe), "estado": "error",
                                     "numero_operacion": numero_op, "error": str(e)})
+            except Exception as exc:
+                cobro.estado = "error"
+                cobro.error  = f"Error al conectar con ePagos: {exc}"
+                fallidos += 1
+                resultados.append({"cliente_id": cliente.id,
+                                    "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
+                                    "importe": float(importe), "estado": "error",
+                                    "numero_operacion": numero_op, "error": cobro.error})
         db.commit()
 
     return {"total": len(items), "exitosos": exitosos, "fallidos": fallidos, "resultados": resultados}
