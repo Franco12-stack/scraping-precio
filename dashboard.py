@@ -1,7 +1,9 @@
 """
 Dashboard web para gestión de cobros ePagos.
 """
+import hashlib
 import os
+import secrets
 import uuid
 from calendar import month_abbr
 from datetime import date, datetime, timedelta
@@ -16,7 +18,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature
 from sqlalchemy import func, extract
 from sqlalchemy.orm import Session
 
-from db import Cliente, Cuenta, Cobro, get_session, init_db
+from db import Cliente, Cuenta, Cobro, Usuario, get_session, init_db
 from epagos import EpagosClient, EpagosError
 
 load_dotenv()
@@ -29,6 +31,38 @@ _ADMIN_USER = os.getenv("DASHBOARD_USER", "admin")
 _ADMIN_PASS = os.getenv("DASHBOARD_PASSWORD", "admin")
 _signer = URLSafeTimedSerializer(_SECRET)
 _SESSION_MAX_AGE = 60 * 60 * 8  # 8 horas
+
+
+# ---------------------------------------------------------------------------
+# Password helpers
+# ---------------------------------------------------------------------------
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
+    return f"{salt}${h.hex()}"
+
+
+def _check_password(password: str, hash_str: str) -> bool:
+    try:
+        salt, h = hash_str.split("$")
+        expected = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
+        return expected.hex() == h
+    except Exception:
+        return False
+
+
+def _seed_admin():
+    """Crea el usuario admin inicial si no existe ninguno."""
+    with get_session() as db:
+        if db.query(func.count(Usuario.id)).scalar() == 0:
+            db.add(Usuario(
+                username=_ADMIN_USER,
+                password_hash=_hash_password(_ADMIN_PASS),
+                rol="admin",
+                activo=True,
+            ))
+            db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +82,14 @@ def _get_current_user(request: Request) -> Optional[str]:
         return _signer.loads(token, max_age=_SESSION_MAX_AGE)
     except BadSignature:
         return None
+
+
+def _get_usuario(request: Request) -> Optional[Usuario]:
+    username = _get_current_user(request)
+    if not username:
+        return None
+    with get_session() as db:
+        return db.query(Usuario).filter(Usuario.username == username, Usuario.activo == True).first()
 
 
 def _require_auth(request: Request):
@@ -80,7 +122,12 @@ def login_submit(
     username: str = Form(...),
     password: str = Form(...),
 ):
-    if username == _ADMIN_USER and password == _ADMIN_PASS:
+    with get_session() as db:
+        usuario = db.query(Usuario).filter(
+            Usuario.username == username,
+            Usuario.activo == True,
+        ).first()
+    if usuario and _check_password(password, usuario.password_hash):
         resp = RedirectResponse("/dashboard", status_code=302)
         _set_session(resp, username)
         return resp
@@ -869,3 +916,91 @@ async def api_cobros_masivo(request: Request):
         db.commit()
 
     return {"total": len(items), "exitosos": exitosos, "fallidos": fallidos, "resultados": resultados}
+
+
+# ---------------------------------------------------------------------------
+# Usuarios (solo admin)
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard/usuarios", response_class=HTMLResponse)
+def usuarios_page(request: Request):
+    usuario = _get_usuario(request)
+    if not usuario:
+        return _redirect_login()
+    if usuario.rol != "admin":
+        return RedirectResponse("/dashboard", status_code=302)
+    with get_session() as db:
+        usuarios = db.query(Usuario).order_by(Usuario.creado_en).all()
+        return templates.TemplateResponse("dashboard/usuarios.html", {
+            "request": request,
+            "usuarios": [{"id": u.id, "username": u.username, "rol": u.rol,
+                           "activo": u.activo, "creado_en": u.creado_en.strftime("%d/%m/%Y")}
+                          for u in usuarios],
+            "usuario_actual": usuario.username,
+        })
+
+
+@router.post("/api/usuarios")
+async def api_crear_usuario(request: Request):
+    usuario = _get_usuario(request)
+    if not usuario or usuario.rol != "admin":
+        return JSONResponse({"error": "No autorizado"}, status_code=403)
+    body = await request.json()
+    username = (body.get("username") or "").strip()
+    password = (body.get("password") or "").strip()
+    rol      = body.get("rol", "operador")
+    if not username or not password:
+        return JSONResponse({"error": "Usuario y contraseña son obligatorios"}, status_code=400)
+    if len(password) < 6:
+        return JSONResponse({"error": "La contraseña debe tener al menos 6 caracteres"}, status_code=400)
+    if rol not in ("admin", "operador"):
+        rol = "operador"
+    with get_session() as db:
+        if db.query(Usuario).filter(Usuario.username == username).first():
+            return JSONResponse({"error": "El usuario ya existe"}, status_code=409)
+        nuevo = Usuario(username=username, password_hash=_hash_password(password), rol=rol, activo=True)
+        db.add(nuevo)
+        db.commit()
+        db.refresh(nuevo)
+        return {"ok": True, "id": nuevo.id, "username": nuevo.username, "rol": nuevo.rol,
+                "activo": nuevo.activo, "creado_en": nuevo.creado_en.strftime("%d/%m/%Y")}
+
+
+@router.patch("/api/usuarios/{usuario_id}")
+async def api_editar_usuario(request: Request, usuario_id: int):
+    usuario = _get_usuario(request)
+    if not usuario or usuario.rol != "admin":
+        return JSONResponse({"error": "No autorizado"}, status_code=403)
+    body = await request.json()
+    with get_session() as db:
+        u = db.get(Usuario, usuario_id)
+        if not u:
+            return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
+        if u.username == usuario.username:
+            return JSONResponse({"error": "No podés modificar tu propio usuario"}, status_code=400)
+        if "activo" in body:
+            u.activo = bool(body["activo"])
+        if "rol" in body and body["rol"] in ("admin", "operador"):
+            u.rol = body["rol"]
+        if "password" in body and body["password"]:
+            if len(body["password"]) < 6:
+                return JSONResponse({"error": "Contraseña muy corta (mín. 6 caracteres)"}, status_code=400)
+            u.password_hash = _hash_password(body["password"])
+        db.commit()
+        return {"ok": True}
+
+
+@router.delete("/api/usuarios/{usuario_id}")
+def api_eliminar_usuario(request: Request, usuario_id: int):
+    usuario = _get_usuario(request)
+    if not usuario or usuario.rol != "admin":
+        return JSONResponse({"error": "No autorizado"}, status_code=403)
+    with get_session() as db:
+        u = db.get(Usuario, usuario_id)
+        if not u:
+            return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
+        if u.username == usuario.username:
+            return JSONResponse({"error": "No podés eliminar tu propio usuario"}, status_code=400)
+        db.delete(u)
+        db.commit()
+        return {"ok": True}

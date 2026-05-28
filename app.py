@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from epagos import EpagosClient, EpagosError, PagoEvento
 from db import init_db
-from dashboard import router as dashboard_router
+from dashboard import router as dashboard_router, _seed_admin
 
 load_dotenv()
 
@@ -27,6 +27,7 @@ app = FastAPI(title="ePagos - Cobros Recurrentes", version="1.0.0")
 
 # Inicializar BD y montar dashboard
 init_db()
+_seed_admin()
 app.include_router(dashboard_router)
 
 

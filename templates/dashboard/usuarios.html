@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Usuarios — ePagos{% endblock %}
+
+{% block content %}
+<div x-data="usuariosApp()" x-init="init()" x-cloak>
+
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h4 class="fw-bold mb-0"><i class="bi bi-people me-2"></i>Gestión de usuarios</h4>
+      <small class="text-muted">Creá y administrá los usuarios que pueden acceder al dashboard</small>
+    </div>
+    <button class="btn btn-primary btn-sm" @click="mostrarForm = !mostrarForm">
+      <i class="bi bi-person-plus me-1"></i>Nuevo usuario
+    </button>
+  </div>
+
+  <!-- Formulario nuevo usuario -->
+  <div x-show="mostrarForm" x-transition class="card shadow-sm border-0 mb-4">
+    <div class="card-header bg-white fw-semibold"><i class="bi bi-person-plus me-2"></i>Crear usuario</div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Usuario</label>
+          <input x-model="form.username" class="form-control" placeholder="nombre_usuario">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Contraseña</label>
+          <input x-model="form.password" type="password" class="form-control" placeholder="Mín. 6 caracteres">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small fw-semibold">Rol</label>
+          <select x-model="form.rol" class="form-select">
+            <option value="operador">Operador</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+          <button class="btn btn-success w-100" @click="crearUsuario()" :disabled="guardando">
+            <span x-show="!guardando"><i class="bi bi-check2 me-1"></i>Guardar</span>
+            <span x-show="guardando"><span class="spinner-border spinner-border-sm me-1"></span>Guardando…</span>
+          </button>
+        </div>
+      </div>
+      <div class="form-text mt-2">
+        <strong>Admin:</strong> puede crear/eliminar usuarios. <strong>Operador:</strong> solo gestiona clientes y cobros.
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabla usuarios -->
+  <div class="card shadow-sm border-0">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <span class="fw-semibold">Usuarios registrados</span>
+      <span class="badge bg-primary rounded-pill" x-text="usuarios.length + ' usuario(s)'"></span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Usuario</th>
+            <th>Rol</th>
+            <th>Estado</th>
+            <th>Creado</th>
+            <th>Nueva contraseña</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-if="usuarios.length === 0">
+            <tr><td colspan="6" class="text-center text-muted py-5">No hay usuarios.</td></tr>
+          </template>
+          <template x-for="u in usuarios" :key="u.id">
+            <tr :class="!u.activo ? 'table-secondary text-muted' : ''">
+              <td class="ps-3 fw-semibold">
+                <i class="bi bi-person-circle me-1"></i>
+                <span x-text="u.username"></span>
+                <span x-show="u.username === usuarioActual" class="badge bg-info ms-1 small">Vos</span>
+              </td>
+              <td>
+                <span :class="u.rol === 'admin' ? 'badge bg-danger' : 'badge bg-secondary'" x-text="u.rol"></span>
+              </td>
+              <td>
+                <span x-show="u.activo" class="badge bg-success">Activo</span>
+                <span x-show="!u.activo" class="badge bg-secondary">Inactivo</span>
+              </td>
+              <td class="small text-muted" x-text="u.creado_en"></td>
+              <td style="width:220px">
+                <div x-show="u.username !== usuarioActual" class="input-group input-group-sm">
+                  <input type="password" class="form-control" placeholder="Nueva contraseña"
+                         x-model="u._nuevaPass">
+                  <button class="btn btn-outline-secondary btn-sm"
+                          @click="cambiarPassword(u)"
+                          :disabled="!u._nuevaPass">
+                    <i class="bi bi-key"></i>
+                  </button>
+                </div>
+              </td>
+              <td class="text-end pe-3">
+                <div x-show="u.username !== usuarioActual" class="d-flex gap-1 justify-content-end">
+                  <button class="btn btn-outline-secondary btn-sm"
+                          @click="toggleActivo(u)"
+                          :title="u.activo ? 'Desactivar' : 'Activar'">
+                    <i :class="u.activo ? 'bi bi-pause-fill' : 'bi bi-play-fill'"></i>
+                  </button>
+                  <button class="btn btn-outline-danger btn-sm"
+                          @click="eliminarUsuario(u)">
+                    <i class="bi bi-trash3"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function usuariosApp() {
+  const _usuarios = {{ usuarios | tojson }};
+  const _usuarioActual = {{ usuario_actual | tojson }};
+
+  return {
+    usuarios: _usuarios.map(u => ({...u, _nuevaPass: ''})),
+    usuarioActual: _usuarioActual,
+    mostrarForm: false,
+    guardando: false,
+    form: { username: '', password: '', rol: 'operador' },
+
+    init() {},
+
+    async crearUsuario() {
+      if (!this.form.username || !this.form.password) {
+        showToast('Completá usuario y contraseña', 'error'); return;
+      }
+      this.guardando = true;
+      try {
+        const res = await fetch('/api/usuarios', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.form),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Error al crear usuario', 'error'); return; }
+        this.usuarios.push({...data, _nuevaPass: ''});
+        this.form = { username: '', password: '', rol: 'operador' };
+        this.mostrarForm = false;
+        showToast(`✅ Usuario "${data.username}" creado`);
+      } catch (e) {
+        showToast('Error de red: ' + e.message, 'error');
+      } finally {
+        this.guardando = false;
+      }
+    },
+
+    async toggleActivo(u) {
+      const res = await fetch('/api/usuarios/' + u.id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo: !u.activo }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error || 'Error', 'error'); return; }
+      u.activo = !u.activo;
+      showToast(u.activo ? `✅ "${u.username}" activado` : `⏸ "${u.username}" desactivado`);
+    },
+
+    async cambiarPassword(u) {
+      if (!u._nuevaPass || u._nuevaPass.length < 6) {
+        showToast('Mínimo 6 caracteres', 'error'); return;
+      }
+      const res = await fetch('/api/usuarios/' + u.id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: u._nuevaPass }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error || 'Error', 'error'); return; }
+      u._nuevaPass = '';
+      showToast(`✅ Contraseña de "${u.username}" actualizada`);
+    },
+
+    async eliminarUsuario(u) {
+      if (!confirm(`¿Eliminar al usuario "${u.username}"? Esta acción no se puede deshacer.`)) return;
+      const res = await fetch('/api/usuarios/' + u.id, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error || 'Error', 'error'); return; }
+      this.usuarios = this.usuarios.filter(x => x.id !== u.id);
+      showToast(`🗑️ Usuario "${u.username}" eliminado`);
+    },
+  };
+}
+</script>
+{% endblock %}
