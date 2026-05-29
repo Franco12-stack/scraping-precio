@@ -262,8 +262,10 @@ class EpagosClient:
         dni_pagador:      int,
         cuit_pagador:     int,
         fecha_vencimiento: Optional[date] = None,
+        identificador_cliente: str = "",
         identificador_externo_2: str = "",
         identificador_externo_3: str = "",
+        tipo_operacion: int = 0,
     ):
         DetallePago      = self._tipo("DetallePago")
         IdentPagador     = self._tipo("IdentificacionPagador")
@@ -299,16 +301,18 @@ class EpagosClient:
         )
 
         return DatosOperacion(
-            numero_operacion         = numero_operacion,
-            identificador_externo_2  = identificador_externo_2,
-            identificador_externo_3  = identificador_externo_3,
-            id_moneda_operacion      = 1,          # 1 = ARS
-            monto_operacion          = float(importe),
-            opc_pdf                  = False,
-            opc_fecha_vencimiento    = fecha_vencimiento or date(2099, 12, 31),
-            opc_devolver_qr          = False,
-            opc_devolver_codbarras   = False,
-            detalle_operacion        = [DetallePago(
+            numero_operacion        = numero_operacion,
+            identificador_cliente   = identificador_cliente,   # campo dedicado (doc v2)
+            identificador_externo_2 = identificador_externo_2,
+            identificador_externo_3 = identificador_externo_3,
+            id_moneda_operacion     = 1,
+            monto_operacion         = float(importe),
+            opc_pdf                 = False,
+            opc_fecha_vencimiento   = fecha_vencimiento or date(2099, 12, 31),
+            opc_devolver_qr         = False,
+            opc_devolver_codbarras  = False,
+            tipo_operacion          = tipo_operacion,
+            detalle_operacion       = [DetallePago(
                 id_item     = 1,
                 desc_item   = descripcion or "Cobro recurrente",
                 monto_item  = float(importe),
@@ -345,7 +349,8 @@ class EpagosClient:
 
         operacion   = self._build_operacion(numero_operacion, importe, descripcion,
                                             nombre_pagador, apellido_pagador,
-                                            email_pagador, dni_pagador, cuit_pagador)
+                                            email_pagador, dni_pagador, cuit_pagador,
+                                            identificador_cliente=identificador_cliente)
         SuscCliente = self._tipo("SuscripcionCliente")
         cliente_sus = SuscCliente(
             identificador_cliente = identificador_cliente,
