@@ -171,7 +171,7 @@
             </button>
           </div>
         </div>
-        <!-- Formulario agregar CBU manual -->
+        <!-- Formulario agregar CBU -->
         <div x-show="mostrarFormCBU" x-transition class="card-body border-bottom bg-light">
           <div class="row g-2 align-items-end">
             <div class="col-md-5">
@@ -189,8 +189,24 @@
                 <span x-show="agregandoCBU"><span class="spinner-border spinner-border-sm me-1"></span>Guardando…</span>
               </button>
             </div>
+            <!-- ID manual de ePagos -->
+            <div class="col-12">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="chkIdManual" x-model="formCBU.idManual">
+                <label class="form-check-label small text-muted" for="chkIdManual">
+                  Ingresar ID ePagos manualmente <span class="text-warning">(usar si ePagos ya te dio el identificador_cuenta)</span>
+                </label>
+              </div>
+            </div>
+            <template x-if="formCBU.idManual">
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">identificador_cuenta de ePagos</label>
+                <input x-model="formCBU.identificador_cuenta" class="form-control font-monospace"
+                       placeholder="ACC-00001234">
+                <div class="form-text">Lo obtenés del portal de ePagos o de soporte técnico.</div>
+              </div>
+            </template>
           </div>
-          <div class="form-text mt-1">El CBU se registra directamente en ePagos sin necesidad de adhesión web.</div>
         </div>
         <div class="card-body p-0">
           <table class="table table-hover mb-0">
@@ -295,7 +311,7 @@ function clienteDetalleApp() {
     linkAdhesion: null,
     mostrarFormCBU: false,
     agregandoCBU: false,
-    formCBU: { cbu: '', alias: '' },
+    formCBU: { cbu: '', alias: '', idManual: false, identificador_cuenta: '' },
     eliminando: false,
     eliminandoCuenta: null,
     mostrarFormCobro: false,
@@ -364,20 +380,27 @@ function clienteDetalleApp() {
       }
       this.agregandoCBU = true;
       try {
+        const payload = {
+          cbu: this.formCBU.cbu,
+          alias: this.formCBU.alias,
+          identificador_cuenta: this.formCBU.idManual ? this.formCBU.identificador_cuenta : '',
+        };
         const res = await fetch('/api/clientes/' + this.clienteId + '/agregar_cbu', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.formCBU),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) { showToast(data.error || 'Error al agregar CBU', 'error'); return; }
         this.cliente.cuentas.push(data.cuenta);
-        this.formCBU = { cbu: '', alias: '' };
+        this.formCBU = { cbu: '', alias: '', idManual: false, identificador_cuenta: '' };
         this.mostrarFormCBU = false;
         if (data.epagos_ok) {
           showToast('✅ CBU registrado en ePagos. ID: ' + data.cuenta.identificador_cuenta);
+        } else if (payload.identificador_cuenta) {
+          showToast('✅ CBU guardado con ID manual: ' + data.cuenta.identificador_cuenta);
         } else {
-          showToast('⚠️ CBU guardado solo localmente (ePagos: ' + (data.advertencia || 'sin respuesta') + ')', 'error');
+          showToast('⚠️ CBU guardado localmente. ePagos: ' + (data.advertencia || 'no autorizado'), 'error');
         }
       } catch (e) {
         showToast('Error de red: ' + e.message, 'error');

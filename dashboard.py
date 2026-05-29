@@ -692,36 +692,41 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
     body = await request.json()
     cbu = (body.get("cbu") or "").strip().replace(" ", "")
     alias = (body.get("alias") or "").strip()
+    id_manual = (body.get("identificador_cuenta") or "").strip()
     if not cbu or len(cbu) != 22 or not cbu.isdigit():
         return JSONResponse({"error": "El CBU debe tener exactamente 22 dígitos"}, status_code=400)
     with get_session() as db:
         cliente = db.get(Cliente, cliente_id)
         if not cliente:
             return JSONResponse({"error": "Cliente no encontrado"}, status_code=404)
-        # Verificar duplicado antes de llamar a ePagos
         existe = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
         if existe:
             return JSONResponse({"error": "Ese CBU ya está registrado"}, status_code=409)
 
-        # Registrar en ePagos v2.1 — retorna el identificador_cuenta real
-        epagos_advertencia = None
-        epagos_id_cuenta = None
-        try:
-            ep = _epagos()
-            resultado = ep.registrar_cuenta_cliente(
-                identificador_cliente=cliente.identificador_cliente,
-                cbu=cbu,
-                cuit=cliente.cuit,
-            )
-            epagos_id_cuenta = resultado.get("identificador_cuenta") or None
-            print(f"[agregar_cbu] ePagos OK → identificador_cuenta={epagos_id_cuenta}", flush=True)
-        except (EpagosError, Exception) as exc:
-            epagos_advertencia = str(exc)
-            print(f"[agregar_cbu] ePagos FALLÓ: {exc}", flush=True)
-
-        # Usar el id asignado por ePagos o generar uno local como fallback
-        id_cuenta = epagos_id_cuenta or f"CBU-{cbu[-8:]}"
-        epagos_ok = epagos_id_cuenta is not None
+        # Si el usuario ingresó el ID manual, usarlo directamente
+        if id_manual:
+            id_cuenta = id_manual
+            epagos_ok = True
+            epagos_advertencia = None
+            print(f"[agregar_cbu] ID manual: {id_cuenta}", flush=True)
+        else:
+            # Registrar en ePagos v2.1
+            epagos_advertencia = None
+            epagos_id_cuenta = None
+            try:
+                ep = _epagos()
+                resultado = ep.registrar_cuenta_cliente(
+                    identificador_cliente=cliente.identificador_cliente,
+                    cbu=cbu,
+                    cuit=cliente.cuit,
+                )
+                epagos_id_cuenta = resultado.get("identificador_cuenta") or None
+                print(f"[agregar_cbu] ePagos OK → identificador_cuenta={epagos_id_cuenta}", flush=True)
+            except (EpagosError, Exception) as exc:
+                epagos_advertencia = str(exc)
+                print(f"[agregar_cbu] ePagos FALLÓ: {exc}", flush=True)
+            id_cuenta = epagos_id_cuenta or f"CBU-{cbu[-8:]}"
+            epagos_ok = epagos_id_cuenta is not None
         nueva = Cuenta(
             cliente_id=cliente_id,
             identificador_cuenta=id_cuenta,

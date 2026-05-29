@@ -491,7 +491,7 @@ class EpagosClient:
 
     # ------------------------------------------------------------------
 
-    _ERROR_PREFIXES = ("02", "03")
+    _ERROR_PREFIXES = ("02", "03", "15", "09")
 
     @classmethod
     def _validar(cls, id_resp: Any, respuesta: Any) -> None:
