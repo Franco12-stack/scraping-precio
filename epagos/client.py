@@ -343,13 +343,29 @@ class EpagosClient:
             email_pagador = email_pagador,
         )
 
+        venc = date(2099, 12, 31)
         return DatosOperacion(
-            numero_operacion        = numero_operacion,
-            identificador_cliente   = identificador_cliente,
-            identificador_externo_2 = identificador_cliente,
-            id_moneda_operacion     = 1,
-            monto_operacion         = str(float(importe)),
-            detalle_operacion       = [DetallePago(
+            numero_operacion         = numero_operacion,
+            identificador_cliente    = identificador_cliente,
+            identificador_externo_2  = identificador_cliente,
+            identificador_externo_3  = "",
+            identificador_externo_4  = "",
+            url_boleta               = "",
+            id_moneda_operacion      = 1,
+            monto_operacion          = str(float(importe)),
+            opc_pdf                  = False,
+            opc_fecha_vencimiento    = venc,
+            opc_devolver_qr          = False,
+            opc_devolver_codbarras   = False,
+            opc_generar_pdf          = False,
+            fecha_2do_venc           = venc,
+            monto_operacion_2do_venc = 0.0,
+            tipo_operacion           = 0,
+            codigo_publicacion       = 0,
+            opc_T30_cerrado          = False,
+            opc_T30_reutilizable     = False,
+            opc_T30_require_orden    = False,
+            detalle_operacion        = [DetallePago(
                 id_item       = 1,
                 desc_item     = descripcion or "Cobro recurrente",
                 monto_item    = float(importe),
