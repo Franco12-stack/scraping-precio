@@ -332,17 +332,35 @@ class EpagosClient:
         cuit_pagador:     int,
         identificador_cliente: str = "",
     ):
-        """Construye DatosOperacionPago para el endpoint v2.1 (solicitud_pago_recurrente).
-        Estructura mínima validada por ePagos — solo los campos del XML de referencia.
-        """
+        """Construye DatosOperacionPago para el endpoint v2.1 con todos los campos del WSDL."""
         DetallePago    = self._tipo_v2("DetallePago")
+        IdentPagador   = self._tipo_v2("IdentificacionPagador")
+        DomPagador     = self._tipo_v2("DomicilioPagador")
+        TelPagador     = self._tipo_v2("TelefonoPagador")
         DatosPagador   = self._tipo_v2("DatosPagadorPago")
         DatosOperacion = self._tipo_v2("DatosOperacionPago")
 
         pagador = DatosPagador(
-            nombre_pagador   = nombre_pagador,
-            apellido_pagador = apellido_pagador,
-            email_pagador    = email_pagador,
+            nombre_pagador         = nombre_pagador,
+            apellido_pagador       = apellido_pagador,
+            fechanac_pagador       = date(1900, 1, 1),
+            email_pagador          = email_pagador,
+            identificacion_pagador = IdentPagador(
+                tipo_doc_pagador   = 96,
+                numero_doc_pagador = dni_pagador,
+                cuit_doc_pagador   = cuit_pagador,
+            ),
+            domicilio_pagador = DomPagador(
+                calle_dom_pagador     = "",
+                numero_dom_pagador    = "",
+                adicional_dom_pagador = "",
+                cp_dom_pagador        = "",
+                ciudad_dom_pagador    = "",
+                provincia_dom_pagador = 1,
+                pais_dom_pagador      = 54,
+            ),
+            telefono_pagador = TelPagador(codigo_telef_pagador=0, numero_telef_pagador=0),
+            cbu_pagador = "",
         )
 
         venc = date(2099, 12, 31)
@@ -354,7 +372,7 @@ class EpagosClient:
             identificador_externo_4  = "",
             url_boleta               = "",
             id_moneda_operacion      = 1,
-            monto_operacion          = str(float(importe)),
+            monto_operacion          = float(importe),
             opc_pdf                  = False,
             opc_fecha_vencimiento    = venc,
             opc_devolver_qr          = False,
