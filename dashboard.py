@@ -1129,15 +1129,27 @@ def descargar_template(request: Request):
     if err:
         return err
     contenido = (
-        "nombre,apellido,email,dni,cuit,identificador_cliente,cbu,alias\n"
-        "Juan,Pérez,juan.perez@gmail.com,12345678,20123456789,CLI-12345678,0720461088000012345678,Cuenta Juan\n"
-        "María,González,maria.g@gmail.com,23456789,27234567890,CLI-23456789,,\n"
+        "NOMBRE,CUIT/CUIL,CVU/CBU,BANCO\n"
+        "GARCIA JUAN,20123456789,3220001101000040970011,Banco Nación\n"
+        "LOPEZ MARIA,27234567890,0720461088000012345678,Banco Galicia\n"
     )
     return StreamingResponse(
         io.BytesIO(contenido.encode("utf-8-sig")),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=plantilla_clientes.csv"},
     )
+
+
+def _dni_desde_cuit(cuit_digits: str) -> int:
+    """Extrae el DNI de un CUIT/CUIL de persona física (prefijos 20/23/24/27)."""
+    if len(cuit_digits) == 11 and cuit_digits[:2] in ("20", "23", "24", "27"):
+        return int(cuit_digits[2:10])
+    return 0
+
+
+def _normalizar_cuit(raw: str) -> str:
+    """Quita guiones, puntos y espacios y retorna solo los dígitos del CUIT."""
+    return "".join(c for c in raw if c.isdigit())
 
 
 @router.post("/api/importar_clientes")
@@ -1162,10 +1174,19 @@ async def api_importar_clientes(
         return JSONResponse({"error": f"No se pudo leer el archivo: {exc}"}, status_code=400)
 
     # Normalizar nombres de columnas
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    cols = set(df.columns)
 
-    required_cols = {"nombre", "apellido", "email", "dni", "cuit"}
-    missing = required_cols - set(df.columns)
+    # Detectar formato: nuevo (NOMBRE / CUIT/CUIL / CVU/CBU / BANCO)
+    #                   o viejo (nombre / apellido / email / dni / cuit / ...)
+    formato_nuevo = "cuit/cuil" in cols or "cvu/cbu" in cols
+
+    if formato_nuevo:
+        required_cols = {"nombre", "cuit/cuil", "cvu/cbu"}
+    else:
+        required_cols = {"nombre", "apellido", "email", "dni", "cuit"}
+
+    missing = required_cols - cols
     if missing:
         encontradas = ", ".join(df.columns.tolist())
         return JSONResponse(
@@ -1182,58 +1203,95 @@ async def api_importar_clientes(
         for i, row in df.iterrows():
             fila = int(i) + 2  # +1 encabezado +1 base-1
 
-            nombre   = str(row.get("nombre",   "")).strip()
-            apellido = str(row.get("apellido", "")).strip()
-            email    = str(row.get("email",    "")).strip()
-            dni_raw  = str(row.get("dni",      "")).strip().rstrip(".0")
-            cuit_raw = str(row.get("cuit",     "")).strip().rstrip(".0")
-            id_cliente = str(row.get("identificador_cliente", "")).strip()
-            cbu      = str(row.get("cbu",   "")).strip().replace(" ", "").rstrip(".0")
-            alias    = str(row.get("alias", "")).strip()
+            if formato_nuevo:
+                nombre_completo = str(row.get("nombre", "")).strip()
+                cuit_raw        = str(row.get("cuit/cuil", "")).strip()
+                cbu             = str(row.get("cvu/cbu", "")).strip().replace(" ", "").rstrip(".0")
+                alias           = str(row.get("banco", "")).strip()
 
-            # Ignorar filas vacías
-            if not any([nombre, apellido, email, dni_raw, cuit_raw]):
-                continue
+                # Ignorar filas vacías
+                if not nombre_completo and not cuit_raw:
+                    continue
 
-            if not all([nombre, apellido, email, dni_raw, cuit_raw]):
-                resultados.append({
-                    "fila": fila, "nombre": f"{apellido}, {nombre}",
-                    "identificador": id_cliente, "estado": "error",
-                    "accion_cliente": "", "cbu_estado": "",
-                    "error": "Campos obligatorios vacíos (nombre, apellido, email, dni, cuit)",
-                })
-                continue
+                if not nombre_completo or not cuit_raw:
+                    resultados.append({
+                        "fila": fila, "nombre": nombre_completo,
+                        "identificador": "", "estado": "error",
+                        "accion_cliente": "", "cbu_estado": "",
+                        "error": "NOMBRE y CUIT/CUIL son obligatorios",
+                    })
+                    continue
 
-            try:
-                dni  = int(float(dni_raw))
-                cuit = int(float(cuit_raw))
-            except ValueError:
-                resultados.append({
-                    "fila": fila, "nombre": f"{apellido}, {nombre}",
-                    "identificador": id_cliente, "estado": "error",
-                    "accion_cliente": "", "cbu_estado": "",
-                    "error": f"DNI '{dni_raw}' o CUIT '{cuit_raw}' no son números válidos",
-                })
-                continue
+                cuit_digits = _normalizar_cuit(cuit_raw)
+                if len(cuit_digits) not in (10, 11):
+                    resultados.append({
+                        "fila": fila, "nombre": nombre_completo,
+                        "identificador": "", "estado": "error",
+                        "accion_cliente": "", "cbu_estado": "",
+                        "error": f"CUIT/CUIL inválido: '{cuit_raw}'",
+                    })
+                    continue
 
-            # Auto-generar identificador si no viene o es muy corto
-            if len(id_cliente) < 6:
-                id_cliente = f"CLI-{dni}"
+                if len(cuit_digits) == 10:
+                    cuit_digits = cuit_digits.zfill(11)
 
-            # Crear o encontrar cliente
+                cuit       = int(cuit_digits)
+                dni        = _dni_desde_cuit(cuit_digits)
+                nombre     = ""
+                apellido   = nombre_completo
+                email      = ""
+                id_cliente = f"CLI-{cuit_digits}"
+
+            else:
+                nombre     = str(row.get("nombre",   "")).strip()
+                apellido   = str(row.get("apellido", "")).strip()
+                email      = str(row.get("email",    "")).strip()
+                dni_raw    = str(row.get("dni",      "")).strip().rstrip(".0")
+                cuit_raw   = str(row.get("cuit",     "")).strip().rstrip(".0")
+                id_cliente = str(row.get("identificador_cliente", "")).strip()
+                cbu        = str(row.get("cbu",   "")).strip().replace(" ", "").rstrip(".0")
+                alias      = str(row.get("alias", "")).strip()
+
+                if not any([nombre, apellido, email, dni_raw, cuit_raw]):
+                    continue
+
+                if not all([nombre, apellido, email, dni_raw, cuit_raw]):
+                    resultados.append({
+                        "fila": fila, "nombre": f"{apellido}, {nombre}",
+                        "identificador": id_cliente, "estado": "error",
+                        "accion_cliente": "", "cbu_estado": "",
+                        "error": "Campos obligatorios vacíos (nombre, apellido, email, dni, cuit)",
+                    })
+                    continue
+
+                try:
+                    dni  = int(float(dni_raw))
+                    cuit = int(float(cuit_raw))
+                except ValueError:
+                    resultados.append({
+                        "fila": fila, "nombre": f"{apellido}, {nombre}",
+                        "identificador": id_cliente, "estado": "error",
+                        "accion_cliente": "", "cbu_estado": "",
+                        "error": f"DNI '{dni_raw}' o CUIT '{cuit_raw}' no son números válidos",
+                    })
+                    continue
+
+                if len(id_cliente) < 6:
+                    id_cliente = f"CLI-{dni}"
+
+            # ---- Crear o encontrar cliente ----
             cliente_existente = db.query(Cliente).filter(
                 Cliente.identificador_cliente == id_cliente
             ).first()
 
             if cliente_existente:
-                cliente     = cliente_existente
+                cliente        = cliente_existente
                 accion_cliente = "ya existía"
             else:
-                # Verificar DNI duplicado
-                por_dni = db.query(Cliente).filter(Cliente.dni == dni).first()
-                if por_dni:
-                    cliente     = por_dni
-                    accion_cliente = "ya existía (mismo DNI)"
+                por_cuit = db.query(Cliente).filter(Cliente.cuit == cuit).first()
+                if por_cuit:
+                    cliente        = por_cuit
+                    accion_cliente = "ya existía (mismo CUIT)"
                 else:
                     cliente = Cliente(
                         identificador_cliente=id_cliente,
@@ -1244,7 +1302,7 @@ async def api_importar_clientes(
                     db.flush()
                     accion_cliente = "creado"
 
-            # Registrar CBU si viene
+            # ---- Registrar CBU/CVU si viene ----
             cbu_estado = ""
             if cbu and len(cbu) == 22 and cbu.isdigit():
                 existe_cbu = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
@@ -1277,14 +1335,14 @@ async def api_importar_clientes(
                         ))
                         cbu_estado = f"CBU guardado local (ePagos: {exc_ep})"
             elif cbu and cbu not in ("", "nan", "none"):
-                cbu_estado = f"CBU inválido ({len(cbu)} dígitos)"
+                cbu_estado = f"CBU/CVU inválido ({len(cbu)} dígitos)"
 
             try:
                 db.commit()
             except Exception as exc_db:
                 db.rollback()
                 resultados.append({
-                    "fila": fila, "nombre": f"{apellido}, {nombre}",
+                    "fila": fila, "nombre": apellido,
                     "identificador": id_cliente, "estado": "error",
                     "accion_cliente": accion_cliente, "cbu_estado": cbu_estado,
                     "error": f"Error BD: {exc_db}",
@@ -1293,7 +1351,7 @@ async def api_importar_clientes(
 
             resultados.append({
                 "fila": fila,
-                "nombre": f"{apellido}, {nombre}",
+                "nombre": apellido,
                 "identificador": id_cliente,
                 "estado": "ok",
                 "accion_cliente": accion_cliente,
