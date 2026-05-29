@@ -36,24 +36,21 @@ def main():
     # ── 1. registrar_cuentas_cliente ──────────────────────────────
     separador("1. registrar_cuentas_cliente")
     try:
-        resultado = client.registrar_cuentas_cliente(
+        resultado = client.registrar_cuenta_cliente(
             identificador_cliente=ID_CLIENTE_PRUEBA,
-            nombre=NOMBRE_PRUEBA,
-            apellido=APELLIDO_PRUEBA,
-            email=EMAIL_PRUEBA,
-            dni=DNI_PRUEBA,
-            cuit=CUIT_PRUEBA,
             cbu=CBU_PRUEBA,
+            cuit=CUIT_PRUEBA,
         )
         print(f"OK → {resultado}")
         id_cuenta = resultado.get("identificador_cuenta", CBU_PRUEBA)
     except EpagosError as e:
         print(f"EpagosError: {e}")
-        id_cuenta = f"CBU-{CBU_PRUEBA}"
-        print(f"Usando fallback id_cuenta: {id_cuenta}")
+        print("\n✗ No se puede continuar sin un identificador_cuenta válido.")
+        sys.exit(1)
     except Exception as e:
         print(f"Error inesperado: {e}")
-        id_cuenta = f"CBU-{CBU_PRUEBA}"
+        print("\n✗ No se puede continuar sin un identificador_cuenta válido.")
+        sys.exit(1)
 
     # ── 2. solicitud_pago_recurrente ──────────────────────────────
     separador("2. solicitud_pago_recurrente")
