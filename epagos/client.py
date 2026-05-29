@@ -320,6 +320,74 @@ class EpagosClient:
             pagador = pagador,
         )
 
+    def _build_operacion_v2(
+        self,
+        numero_operacion: str,
+        importe: float,
+        descripcion: str,
+        nombre_pagador:   str,
+        apellido_pagador: str,
+        email_pagador:    str,
+        dni_pagador:      int,
+        cuit_pagador:     int,
+        identificador_cliente: str = "",
+    ):
+        """Construye DatosOperacionPago para el endpoint v2.1 (solicitud_pago_recurrente)."""
+        DetallePago    = self._tipo_v2("DetallePago")
+        IdentPagador   = self._tipo_v2("IdentificacionPagador")
+        DomPagador     = self._tipo_v2("DomicilioPagador")
+        TelPagador     = self._tipo_v2("TelefonoPagador")
+        DatosPagador   = self._tipo_v2("DatosPagadorPago")
+        DatosOperacion = self._tipo_v2("DatosOperacionPago")
+
+        pagador = DatosPagador(
+            nombre_pagador         = nombre_pagador,
+            apellido_pagador       = apellido_pagador,
+            fechanac_pagador       = date(1900, 1, 1),
+            email_pagador          = email_pagador,
+            identificacion_pagador = IdentPagador(
+                tipo_doc_pagador   = 96,
+                numero_doc_pagador = dni_pagador,
+                cuit_doc_pagador   = cuit_pagador,
+            ),
+            domicilio_pagador = DomPagador(
+                calle_dom_pagador="", numero_dom_pagador="",
+                adicional_dom_pagador="", cp_dom_pagador="",
+                ciudad_dom_pagador="", provincia_dom_pagador=1, pais_dom_pagador=54,
+            ),
+            telefono_pagador = TelPagador(codigo_telef_pagador=0, numero_telef_pagador=0),
+            cbu_pagador = "",
+        )
+
+        venc = date(2099, 12, 31)
+        return DatosOperacion(
+            numero_operacion         = numero_operacion,
+            identificador_cliente    = identificador_cliente,
+            identificador_externo_2  = identificador_cliente,
+            identificador_externo_3  = "",
+            identificador_externo_4  = "",
+            url_boleta               = "",
+            id_moneda_operacion      = 1,
+            monto_operacion          = float(importe),
+            opc_pdf                  = False,
+            opc_fecha_vencimiento    = venc,
+            opc_devolver_qr          = False,
+            opc_devolver_codbarras   = False,
+            opc_generar_pdf          = False,
+            fecha_2do_venc           = venc,
+            monto_operacion_2do_venc = 0.0,
+            tipo_operacion           = 0,
+            codigo_publicacion       = 0,
+            opc_T30_cerrado          = False,
+            opc_T30_reutilizable     = False,
+            opc_T30_require_orden    = False,
+            detalle_operacion        = [DetallePago(
+                id_item=1, desc_item=descripcion or "Cobro recurrente",
+                monto_item=float(importe), cantidad_item=1,
+            )],
+            pagador = pagador,
+        )
+
     def solicitud_pago_recurrente(
         self,
         identificador_cliente:  str,
@@ -334,6 +402,7 @@ class EpagosClient:
         descripcion:            str = "Cobro recurrente",
         convenio:               Optional[int] = None,
         medio:                  str = MEDIO_DEBITO_DIRECTO,
+        fecha_debito:           Optional[date] = None,
     ) -> dict:
         """
         Genera una orden de cobro por débito directo.
@@ -346,24 +415,27 @@ class EpagosClient:
         if not conv:
             raise ValueError("CONVENIO es obligatorio. Completá EPAGOS_CONVENIO en .env")
 
-        operacion   = self._build_operacion(numero_operacion, importe, descripcion,
-                                            nombre_pagador, apellido_pagador,
-                                            email_pagador, dni_pagador, cuit_pagador,
-                                            identificador_cliente=identificador_cliente)
-        SuscCliente = self._tipo("SuscripcionCliente")
+        operacion   = self._build_operacion_v2(numero_operacion, importe, descripcion,
+                                               nombre_pagador, apellido_pagador,
+                                               email_pagador, dni_pagador, cuit_pagador,
+                                               identificador_cliente=identificador_cliente)
+        SuscCliente = self._tipo_v2("SuscripcionCliente")
         cliente_sus = SuscCliente(
             identificador_cliente = identificador_cliente,
             identificador_tarjeta = "",
             identificador_cuenta  = identificador_cuenta,
         )
 
-        resp = self._soap.service.solicitud_pago_recurrente(
-            API_VERSION, TIPO_RECURRENTE, self._creds_pago(),
-            operacion, conv, medio, cliente_sus,
+        from datetime import timedelta
+        fec_debito = fecha_debito or (date.today() + timedelta(days=7))
+        resp = self._v2().service.solicitud_pago_recurrente(
+            API_VERSION_V2, TIPO_RECURRENTE,
+            {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
+            operacion, conv, medio, cliente_sus, fec_debito,
         )
         self._validar(resp.id_resp, resp.respuesta)
         return {
-            "id_transaccion":  resp.id_transaccion,
+            "id_transaccion":   resp.id_transaccion,
             "numero_operacion": resp.numero_operacion,
         }
 
@@ -380,7 +452,7 @@ class EpagosClient:
         dni_pagador:           int,
         cuit_pagador:          int,
         descripcion:           str = "Cobro recurrente",
-        modalidad:             str = "U",   # "U" = única, "P" = periódica
+        modalidad:             str = "U",
         convenio:              Optional[int] = None,
         medio:                 str = MEDIO_DEBITO_DIRECTO,
     ) -> dict:
@@ -393,21 +465,21 @@ class EpagosClient:
         if not conv:
             raise ValueError("CONVENIO es obligatorio. Completá EPAGOS_CONVENIO en .env")
 
-        operacion   = self._build_operacion(numero_operacion, importe, descripcion,
-                                            nombre_pagador, apellido_pagador,
-                                            email_pagador, dni_pagador, cuit_pagador,
-                                            identificador_cliente=identificador_cliente)
-        # DatosSuscripcion fields: fecha (date), monto (float)
+        operacion   = self._build_operacion_v2(numero_operacion, importe, descripcion,
+                                               nombre_pagador, apellido_pagador,
+                                               email_pagador, dni_pagador, cuit_pagador,
+                                               identificador_cliente=identificador_cliente)
         ArraySusc   = [{"fecha": fecha_cobro, "monto": float(importe)}]
-        SuscCliente = self._tipo("SuscripcionCliente")
+        SuscCliente = self._tipo_v2("SuscripcionCliente")
         cliente_sus = SuscCliente(
             identificador_cliente = identificador_cliente,
             identificador_tarjeta = "",
             identificador_cuenta  = identificador_cuenta,
         )
 
-        resp = self._soap.service.solicitud_pago_recurrente_suscripcion(
-            API_VERSION, TIPO_RECURRENTE, self._creds_pago(),
+        resp = self._v2().service.solicitud_pago_recurrente_suscripcion(
+            API_VERSION_V2, TIPO_RECURRENTE,
+            {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
             operacion, ArraySusc, modalidad, descripcion,
             conv, medio, [cliente_sus],
         )
@@ -503,12 +575,14 @@ class EpagosClient:
 
     # ------------------------------------------------------------------
 
-    _ERROR_PREFIXES = ("02", "03", "15", "09")
+    _ERROR_PREFIXES = ("03", "15", "09")
 
     @classmethod
     def _validar(cls, id_resp: Any, respuesta: Any) -> None:
-        id_str = str(id_resp).strip()
-        msg    = str(respuesta).lower()
+        # Normalizar a 5 dígitos con cero inicial (zeep parsea el int y pierde el leading zero)
+        raw = str(id_resp).strip()
+        id_str = raw.zfill(5) if raw.isdigit() else raw
+        msg = str(respuesta).lower()
         if any(id_str.startswith(p) for p in cls._ERROR_PREFIXES) or "error" in msg:
             raise EpagosError(id_str, str(respuesta))
 
