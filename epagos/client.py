@@ -340,7 +340,9 @@ class EpagosClient:
         DatosOperacion = self._tipo_v2("DatosOperacionPago")
 
         pagador = DatosPagador(
-            email_pagador = email_pagador,
+            nombre_pagador   = nombre_pagador,
+            apellido_pagador = apellido_pagador,
+            email_pagador    = email_pagador,
         )
 
         venc = date(2099, 12, 31)
