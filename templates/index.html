@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comparador de Precios</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & base ───────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #0d0d1a;
+      --surface:   #16162a;
+      --surface2:  #1e1e36;
+      --border:    #2a2a4a;
+      --text:      #e2e2f0;
+      --muted:     #7b7ba0;
+      --accent:    #7c6af7;
+      --accent-h:  #9d8fff;
+      --green:     #22c55e;
+      --red:       #ef4444;
+      --yellow:    #f59e0b;
+      --ml:        #ffe600;
+      --cg:        #4ade80;
+      --hg:        #f87171;
+      --mx:        #60a5fa;
+      --radius:    12px;
+      --shadow:    0 4px 24px rgba(0,0,0,.5);
+    }
+    html { font-size: 15px; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────── */
+    header {
+      padding: 1.2rem 2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: var(--surface);
+    }
+    header .logo { font-size: 1.4rem; font-weight: 700; letter-spacing: -.5px; }
+    header .logo span { color: var(--accent); }
+    header .tagline { font-size: .8rem; color: var(--muted); }
+    .badges { display: flex; gap: .5rem; margin-left: auto; flex-wrap: wrap; }
+    .badge-site {
+      font-size: .7rem; font-weight: 600; padding: 3px 10px;
+      border-radius: 20px; letter-spacing: .02em;
+    }
+    .badge-ml  { background: #3d3500; color: var(--ml);  border: 1px solid #6b5c00; }
+    .badge-cg  { background: #0f3320; color: var(--cg);  border: 1px solid #1a5e38; }
+    .badge-hg  { background: #3d1010; color: var(--hg);  border: 1px solid #6b1c1c; }
+    .badge-mx  { background: #0e2240; color: var(--mx);  border: 1px solid #1a3e72; }
+
+    main { flex: 1; padding: 2rem; max-width: 1100px; margin: 0 auto; width: 100%; }
+
+    /* ── Panel de búsqueda ──────────────────────────────────────── */
+    .search-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      margin-bottom: 2rem;
+      box-shadow: var(--shadow);
+    }
+    .search-panel h2 { font-size: 1.1rem; margin-bottom: 1.2rem; color: var(--text); }
+    .form-row { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+    .form-col { display: flex; flex-direction: column; gap: .5rem; }
+    .form-col.grow { flex: 1; min-width: 280px; }
+    label { font-size: .8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    textarea, input[type=number] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: .9rem;
+      padding: .75rem 1rem;
+      transition: border-color .2s;
+      outline: none;
+    }
+    textarea { resize: vertical; min-height: 130px; width: 100%; }
+    textarea:focus, input[type=number]:focus { border-color: var(--accent); }
+    input[type=number] { width: 90px; }
+    .hint { font-size: .75rem; color: var(--muted); }
+
+    /* ── Botón principal ────────────────────────────────────────── */
+    .btn-search {
+      display: inline-flex; align-items: center; gap: .6rem;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: .95rem;
+      font-weight: 600;
+      padding: .8rem 2rem;
+      cursor: pointer;
+      transition: background .2s, transform .1s;
+      white-space: nowrap;
+      align-self: flex-end;
+    }
+    .btn-search:hover { background: var(--accent-h); }
+    .btn-search:active { transform: scale(.97); }
+    .btn-search:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+    .btn-search svg { width: 18px; height: 18px; }
+
+    /* ── Resultados ─────────────────────────────────────────────── */
+    #results-area { display: flex; flex-direction: column; gap: 1.5rem; }
+
+    .product-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      animation: slideIn .3s ease;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .card-header {
+      padding: 1rem 1.4rem;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: .8rem;
+    }
+    .card-title { font-weight: 600; font-size: 1rem; flex: 1; }
+    .card-status { font-size: .8rem; color: var(--muted); display: flex; align-items: center; gap: .4rem; }
+    .card-status.done { color: var(--green); }
+    .card-status.done::before { content: '✓'; }
+
+    /* ── Progreso por sitio ─────────────────────────────────────── */
+    .sites-progress {
+      display: flex;
+      gap: .6rem;
+      padding: .9rem 1.4rem;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .site-chip {
+      display: flex; align-items: center; gap: .4rem;
+      font-size: .78rem; font-weight: 500;
+      padding: .3rem .8rem;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      transition: all .2s;
+    }
+    .site-chip.searching { color: var(--muted); }
+    .site-chip.searching .dot { animation: pulse 1s infinite; }
+    .site-chip.ok  { border-color: var(--green); color: var(--green); background: #0a2a15; }
+    .site-chip.err { border-color: var(--red);   color: var(--red);   background: #2a0a0a; }
+    .site-chip.empty { color: var(--muted); border-style: dashed; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+    @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+    .site-chip .count { font-size: .7rem; opacity: .7; }
+
+    /* ── Tabla de precios ───────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%; border-collapse: collapse;
+      font-size: .88rem;
+    }
+    thead th {
+      padding: .7rem 1rem;
+      text-align: left;
+      font-size: .72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr { border-bottom: 1px solid rgba(255,255,255,.04); transition: background .15s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,.03); }
+    tbody tr.best { background: rgba(245,158,11,.06); }
+    td { padding: .7rem 1rem; vertical-align: middle; }
+
+    .pill-site {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .03em;
+    }
+    .pill-mercadolibre { background: #3d3500; color: var(--ml); }
+    .pill-compragamer  { background: #0f3320; color: var(--cg); }
+    .pill-hardgamer    { background: #3d1010; color: var(--hg); }
+    .pill-mexx         { background: #0e2240; color: var(--mx); }
+
+    .td-title { max-width: 380px; }
+    .td-title a { color: var(--text); text-decoration: none; }
+    .td-title a:hover { color: var(--accent-h); text-decoration: underline; }
+    .td-thumb { width: 44px; height: 44px; object-fit: contain; border-radius: 6px;
+                background: var(--surface2); display: block; }
+
+    .td-price { font-weight: 700; font-size: .95rem; white-space: nowrap; }
+    .td-price .currency { font-size: .7rem; color: var(--muted); font-weight: 400; }
+    .trophy { margin-left: .4rem; font-size: .85rem; }
+
+    .td-link a {
+      display: inline-flex; align-items: center; gap: .3rem;
+      font-size: .8rem; color: var(--accent);
+      text-decoration: none; white-space: nowrap;
+    }
+    .td-link a:hover { color: var(--accent-h); text-decoration: underline; }
+
+    /* ── Estado vacío / buscando ────────────────────────────────── */
+    .empty-row td {
+      text-align: center; padding: 2rem;
+      color: var(--muted); font-style: italic;
+    }
+
+    /* ── Barra de descarga ──────────────────────────────────────── */
+    #download-bar {
+      display: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.2rem 1.6rem;
+      display: flex; align-items: center; gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+    #download-bar.hidden { display: none !important; }
+    #download-bar .label { flex: 1; font-weight: 600; font-size: .95rem; }
+    .btn-dl {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .6rem 1.2rem; border-radius: 8px;
+      font-family: inherit; font-size: .85rem; font-weight: 600;
+      cursor: pointer; border: 1px solid; text-decoration: none;
+      transition: background .2s;
+    }
+    .btn-dl-csv  { background: #0a2a15; color: var(--green); border-color: #1a5e38; }
+    .btn-dl-csv:hover  { background: #0f3320; }
+    .btn-dl-html { background: #0e2240; color: var(--mx);   border-color: #1a3e72; }
+    .btn-dl-html:hover { background: #132e55; }
+
+    /* ── Spinner SVG ────────────────────────────────────────────── */
+    .spin { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Footer ─────────────────────────────────────────────────── */
+    footer {
+      text-align: center; padding: 1rem;
+      font-size: .75rem; color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Responsive ─────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      main { padding: 1rem; }
+      header { flex-wrap: wrap; gap: .5rem; }
+      .badges { margin-left: 0; }
+      .form-row { flex-direction: column; }
+      .btn-search { width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">Precio<span>Scout</span></div>
+    <div class="tagline">Comparador de precios para Argentina</div>
+  </div>
+  <div class="badges">
+    <span class="badge-site badge-ml">MercadoLibre</span>
+    <span class="badge-site badge-cg">CompraGamer</span>
+    <span class="badge-site badge-hg">HardGamer</span>
+    <span class="badge-site badge-mx">Mexx</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Formulario de búsqueda -->
+  <div class="search-panel">
+    <h2>¿Qué productos querés comparar?</h2>
+    <div class="form-row">
+      <div class="form-col grow">
+        <label for="productos">Lista de productos</label>
+        <textarea id="productos" placeholder="RTX 4070&#10;Monitor 27 pulgadas 144hz&#10;SSD 1TB NVMe&#10;Teclado mecánico gamer"></textarea>
+        <span class="hint">Un producto por línea</span>
+      </div>
+      <div class="form-col">
+        <label for="max-res">Resultados por sitio</label>
+        <input type="number" id="max-res" value="5" min="1" max="10" />
+        <span class="hint">Máximo 10</span>
+      </div>
+      <button class="btn-search" id="btn-search" onclick="iniciarBusqueda()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        Buscar precios
+      </button>
+    </div>
+  </div>
+
+  <!-- Botones de descarga (aparecen al terminar) -->
+  <div id="download-bar" class="hidden">
+    <span class="label">✓ Búsqueda completada</span>
+    <a id="btn-csv"  class="btn-dl btn-dl-csv"  href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Descargar CSV
+    </a>
+    <a id="btn-html" class="btn-dl btn-dl-html" href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Descargar HTML
+    </a>
+  </div>
+
+  <!-- Área de resultados -->
+  <div id="results-area"></div>
+
+</main>
+
+<footer>PrecioScout · Datos obtenidos por scraping · Verificar disponibilidad en cada tienda</footer>
+
+<script>
+  const SITIOS = ['MercadoLibre', 'CompraGamer', 'HardGamer', 'Mexx'];
+  const PILL_CLASS = {
+    MercadoLibre: 'pill-mercadolibre',
+    CompraGamer:  'pill-compragamer',
+    HardGamer:    'pill-hardgamer',
+    Mexx:         'pill-mexx',
+  };
+
+  let currentJobId = null;
+
+  // ── Inicio de búsqueda ──────────────────────────────────────────
+  async function iniciarBusqueda() {
+    const productos = document.getElementById('productos').value.trim();
+    const maxRes    = document.getElementById('max-res').value;
+    if (!productos) { alert('Ingresá al menos un producto.'); return; }
+
+    const btn = document.getElementById('btn-search');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spin">⟳</span> Iniciando...`;
+
+    document.getElementById('results-area').innerHTML = '';
+    document.getElementById('download-bar').classList.add('hidden');
+
+    try {
+      const resp = await fetch('/buscar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productos, max_resultados: parseInt(maxRes) }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error || 'Error al iniciar la búsqueda.'); resetBtn(); return; }
+      currentJobId = data.job_id;
+      escucharStream(currentJobId);
+    } catch (e) {
+      alert('Error de conexión: ' + e.message);
+      resetBtn();
+    }
+  }
+
+  function resetBtn() {
+    const btn = document.getElementById('btn-search');
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg> Buscar precios`;
+  }
+
+  // ── Server-Sent Events ──────────────────────────────────────────
+  function escucharStream(jobId) {
+    const es = new EventSource(`/stream/${jobId}`);
+
+    es.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+
+      switch (msg.type) {
+        case 'producto_inicio':
+          crearTarjeta(msg.producto);
+          break;
+        case 'sitio_ok':
+          agregarResultados(msg.producto, msg.sitio, msg.resultados);
+          break;
+        case 'sitio_error':
+          marcarSitioError(msg.producto, msg.sitio);
+          break;
+        case 'producto_listo':
+          finalizarTarjeta(msg.producto);
+          break;
+        case 'done':
+          es.close();
+          finalizarBusqueda(jobId);
+          break;
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      resetBtn();
+    };
+  }
+
+  // ── Gestión de tarjetas de producto ────────────────────────────
+  function slugify(texto) {
+    return texto.replace(/[^a-zA-Z0-9]/g, '_');
+  }
+
+  function crearTarjeta(producto) {
+    const id = slugify(producto);
+    const area = document.getElementById('results-area');
+
+    const card = document.createElement('div');
+    card.className = 'product-card';
+    card.id = `card-${id}`;
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="card-title">🔍 ${esc(producto)}</span>
+        <span class="card-status" id="status-${id}">
+          <span class="spin">⟳</span>&nbsp;buscando en 4 sitios…
+        </span>
+      </div>
+      <div class="sites-progress" id="chips-${id}">
+        ${SITIOS.map(s => `
+          <span class="site-chip searching" id="chip-${id}-${slugify(s)}">
+            <span class="dot"></span>${esc(s)}
+          </span>`).join('')}
+      </div>
+      <div class="table-wrap">
+        <table id="tabla-${id}">
+          <thead>
+            <tr>
+              <th style="width:50px"></th>
+              <th>Sitio</th>
+              <th>Producto</th>
+              <th>Precio</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody-${id}">
+            <tr class="empty-row"><td colspan="5">Buscando…</td></tr>
+          </tbody>
+        </table>
+      </div>`;
+    area.appendChild(card);
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Datos temporales por producto: producto -> [{...resultado}]
+  const _datos = {};
+
+  function agregarResultados(producto, sitio, resultados) {
+    const id = slugify(producto);
+    const chip = document.getElementById(`chip-${id}-${slugify(sitio)}`);
+
+    if (!_datos[producto]) _datos[producto] = [];
+
+    if (resultados.length === 0) {
+      if (chip) { chip.className = 'site-chip empty'; chip.innerHTML = `<span class="dot"></span>${esc(sitio)} <span class="count">(0)</span>`; }
+    } else {
+      _datos[producto].push(...resultados);
+      if (chip) { chip.className = 'site-chip ok'; chip.innerHTML = `<span class="dot"></span>${esc(sitio)} <span class="count">${resultados.length}</span>`; }
+      renderizarTabla(producto);
+    }
+  }
+
+  function marcarSitioError(producto, sitio) {
+    const id = slugify(producto);
+    const chip = document.getElementById(`chip-${id}-${slugify(sitio)}`);
+    if (chip) { chip.className = 'site-chip err'; chip.innerHTML = `<span class="dot"></span>${esc(sitio)} <span class="count">error</span>`; }
+  }
+
+  function renderizarTabla(producto) {
+    const id = slugify(producto);
+    const tbody = document.getElementById(`tbody-${id}`);
+    if (!tbody) return;
+
+    const datos = (_datos[producto] || []).slice().sort((a, b) => a.precio - b.precio);
+    if (!datos.length) return;
+
+    const minPrecio = datos[0].precio;
+    tbody.innerHTML = datos.map((r, i) => {
+      const esMejor = r.precio === minPrecio;
+      const pill    = PILL_CLASS[r.sitio] || '';
+      const imgHtml = r.imagen
+        ? `<img src="${esc(r.imagen)}" class="td-thumb" alt="" loading="lazy" onerror="this.style.display='none'">`
+        : `<div style="width:44px"></div>`;
+      const precioFmt = formatearPrecio(r.precio);
+      return `
+        <tr${esMejor ? ' class="best"' : ''}>
+          <td>${imgHtml}</td>
+          <td><span class="pill-site ${pill}">${esc(r.sitio)}</span></td>
+          <td class="td-title"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.titulo)}</a></td>
+          <td class="td-price">
+            ${precioFmt} <span class="currency">${esc(r.moneda)}</span>
+            ${esMejor ? '<span class="trophy">🏆</span>' : ''}
+          </td>
+          <td class="td-link"><a href="${esc(r.url)}" target="_blank" rel="noopener">Ver →</a></td>
+        </tr>`;
+    }).join('');
+  }
+
+  function finalizarTarjeta(producto) {
+    const id = slugify(producto);
+    const statusEl = document.getElementById(`status-${id}`);
+    const datos = _datos[producto] || [];
+
+    // Chips restantes en "searching" → marcar como vacío
+    SITIOS.forEach(s => {
+      const chip = document.getElementById(`chip-${id}-${slugify(s)}`);
+      if (chip && chip.classList.contains('searching')) {
+        chip.className = 'site-chip empty';
+        chip.innerHTML = `<span class="dot"></span>${esc(s)} <span class="count">(0)</span>`;
+      }
+    });
+
+    if (statusEl) {
+      if (datos.length === 0) {
+        statusEl.textContent = 'Sin resultados';
+        statusEl.style.color = 'var(--red)';
+      } else {
+        statusEl.className = 'card-status done';
+        const min = Math.min(...datos.map(r => r.precio));
+        const mejor = datos.find(r => r.precio === min);
+        statusEl.textContent = `${datos.length} resultados · mejor: ${formatearPrecio(min)} en ${mejor.sitio}`;
+      }
+    }
+
+    const tbody = document.getElementById(`tbody-${id}`);
+    if (tbody && datos.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No se encontraron resultados en ningún sitio.</td></tr>';
+    }
+  }
+
+  function finalizarBusqueda(jobId) {
+    resetBtn();
+    const bar = document.getElementById('download-bar');
+    bar.classList.remove('hidden');
+    document.getElementById('btn-csv').href  = `/descargar/${jobId}/csv`;
+    document.getElementById('btn-html').href = `/descargar/${jobId}/html`;
+    bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────
+  function esc(str) {
+    return String(str ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function formatearPrecio(num) {
+    return '$ ' + Number(num).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  // Permitir Ctrl+Enter para buscar
+  document.getElementById('productos').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) iniciarBusqueda();
+  });
+</script>
+</body>
+</html>
