@@ -174,6 +174,13 @@ class EpagosClient:
             self._soap_v2 = Client(wsdl, settings=settings, transport=Transport(session=Session()))
         return self._soap_v2
 
+    def _tipo_v2(self, nombre: str):
+        """Equivalente a _tipo() pero sobre el cliente v2.1."""
+        key = f"v2:{nombre}"
+        if key not in self._t:
+            self._t[key] = self._v2().get_type(f"ns0:{nombre}")
+        return self._t[key]
+
     def _token_valido_v2(self) -> str:
         """Obtiene (o reutiliza) un token autenticado contra el endpoint v2.1."""
         if not self._token_v2:
@@ -200,19 +207,24 @@ class EpagosClient:
         Usa la API v2.1 que expone registrar_cuentas_cliente.
         Retorna {"identificador_cuenta": "..."} asignado por ePagos.
         """
+        CuentaAgregar = self._tipo_v2("CuentaClienteAgregar")
+        ArrayCuentas  = self._tipo_v2("ArrayCuentasClienteAgregar")
+
+        cuenta = CuentaAgregar(
+            identificador_cliente = identificador_cliente,
+            tipo_operacion        = tipo_operacion,
+            cuit                  = cuit,
+            cbu                   = cbu,
+            fecha_adhesion        = date.today(),
+        )
+
         resp = self._v2().service.registrar_cuentas_cliente(
             API_VERSION_V2,
             {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
-            [{
-                "identificador_cliente": identificador_cliente,
-                "tipo_operacion":        tipo_operacion,
-                "cuit":                  cuit,
-                "cbu":                   cbu,
-                "fecha_adhesion":        date.today(),
-            }],
+            ArrayCuentas([cuenta]),
         )
         self._validar(resp.id_resp, resp.respuesta)
-        # La respuesta trae ArrayCuentasClienteGeneradas — extraer identificador_cuenta
+        # Extraer identificador_cuenta de ArrayCuentasClienteGeneradas
         for item in (resp.cuentas or []):
             id_cuenta = getattr(item, "identificador_cuenta", None) or (
                 item.get("identificador_cuenta") if isinstance(item, dict) else None
