@@ -31,6 +31,7 @@ templates = Jinja2Templates(directory="templates")
 _SECRET = os.getenv("DASHBOARD_SECRET", "cambiar-en-produccion-32chars!!")
 _ADMIN_USER = os.getenv("DASHBOARD_USER", "admin")
 _ADMIN_PASS = os.getenv("DASHBOARD_PASSWORD", "admin")
+_WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 _signer = URLSafeTimedSerializer(_SECRET)
 _SESSION_MAX_AGE = 60 * 60 * 8  # 8 horas
 
@@ -362,6 +363,7 @@ def nuevo_cobro(
                     cuit_pagador=cliente.cuit,
                     descripcion=descripcion,
                 )
+                cobro.id_transaccion = str(resultado.get("id_transaccion") or "")
                 cobro.estado = "programado"
             else:
                 resultado = ep.solicitud_pago_recurrente(
@@ -389,11 +391,15 @@ def nuevo_cobro(
 @router.post("/dashboard/webhook_estado")
 async def webhook_actualizar_estado(request: Request):
     """Recibe el webhook de ePagos y actualiza el estado del cobro en la BD."""
+    if _WEBHOOK_SECRET:
+        token = request.headers.get("X-Webhook-Token", "")
+        if not secrets.compare_digest(token, _WEBHOOK_SECRET):
+            return JSONResponse({"ok": False, "error": "No autorizado"}, status_code=401)
     data = await request.json()
-    id_op  = data.get("id_operacion") or data.get("numero_operacion", "")
+    id_op  = data.get("numero_operacion") or data.get("id_transaccion") or data.get("id_operacion", "")
     estado = data.get("estado", "")
-    if not id_op:
-        return {"ok": False}
+    if not id_op or not estado:
+        return JSONResponse({"ok": False, "error": "Faltan campos"}, status_code=400)
     with get_session() as db:
         cobro = db.query(Cobro).filter(
             (Cobro.numero_operacion == id_op) | (Cobro.id_transaccion == id_op)
@@ -725,7 +731,7 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
             except (EpagosError, Exception) as exc:
                 epagos_advertencia = str(exc)
                 print(f"[agregar_cbu] ePagos FALLÓ: {exc}", flush=True)
-            id_cuenta = epagos_id_cuenta or f"CBU-{cbu[-8:]}"
+            id_cuenta = epagos_id_cuenta or f"CBU-{cbu}"
             epagos_ok = epagos_id_cuenta is not None
         nueva = Cuenta(
             cliente_id=cliente_id,
@@ -834,7 +840,7 @@ async def api_crear_cobro(request: Request):
         try:
             ep = _epagos()
             if tipo == "programado" and fecha_cobro:
-                ep.solicitud_pago_recurrente_suscripcion(
+                resultado = ep.solicitud_pago_recurrente_suscripcion(
                     identificador_cliente=cliente.identificador_cliente,
                     identificador_cuenta=cuenta.identificador_cuenta,
                     importe=float(importe),
@@ -847,6 +853,7 @@ async def api_crear_cobro(request: Request):
                     cuit_pagador=cliente.cuit,
                     descripcion=descripcion,
                 )
+                cobro.id_transaccion = str(resultado.get("id_transaccion") or "")
                 cobro.estado = "programado"
             else:
                 resultado = ep.solicitud_pago_recurrente(
@@ -970,7 +977,7 @@ async def api_cobros_masivo(request: Request):
             db.flush()
             try:
                 if tipo == "programado" and fecha_cobro:
-                    ep.solicitud_pago_recurrente_suscripcion(
+                    res_sus = ep.solicitud_pago_recurrente_suscripcion(
                         identificador_cliente=cliente.identificador_cliente,
                         identificador_cuenta=cuenta.identificador_cuenta,
                         importe=float(importe), numero_operacion=numero_op,
@@ -978,6 +985,7 @@ async def api_cobros_masivo(request: Request):
                         nombre_pagador=cliente.nombre, apellido_pagador=cliente.apellido,
                         email_pagador=cliente.email, dni_pagador=cliente.dni,
                         cuit_pagador=cliente.cuit, descripcion=descripcion)
+                    cobro.id_transaccion = str(res_sus.get("id_transaccion") or "")
                     cobro.estado = "programado"
                 else:
                     res = ep.solicitud_pago_recurrente(
@@ -1244,7 +1252,7 @@ async def api_importar_clientes(
                     cbu_estado = "CBU ya registrado"
                 else:
                     try:
-                        id_cuenta = f"CBU-{cbu[-8:]}"
+                        id_cuenta = f"CBU-{cbu}"
                         if ep:
                             res_cbu = ep.registrar_cuenta_cliente(
                                 identificador_cliente=cliente.identificador_cliente,
@@ -1260,7 +1268,7 @@ async def api_importar_clientes(
                         ))
                         cbu_estado = "CBU registrado"
                     except (EpagosError, Exception) as exc_ep:
-                        id_cuenta = f"CBU-{cbu[-8:]}"
+                        id_cuenta = f"CBU-{cbu}"
                         db.add(Cuenta(
                             cliente_id=cliente.id,
                             identificador_cuenta=id_cuenta,

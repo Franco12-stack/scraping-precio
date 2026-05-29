@@ -396,7 +396,8 @@ class EpagosClient:
 
         operacion   = self._build_operacion(numero_operacion, importe, descripcion,
                                             nombre_pagador, apellido_pagador,
-                                            email_pagador, dni_pagador, cuit_pagador)
+                                            email_pagador, dni_pagador, cuit_pagador,
+                                            identificador_cliente=identificador_cliente)
         # DatosSuscripcion fields: fecha (date), monto (float)
         ArraySusc   = [{"fecha": fecha_cobro, "monto": float(importe)}]
         SuscCliente = self._tipo("SuscripcionCliente")
@@ -412,7 +413,12 @@ class EpagosClient:
             conv, medio, [cliente_sus],
         )
         self._validar(resp.id_resp, resp.respuesta)
-        return {"id_resp": resp.id_resp, "respuesta": resp.respuesta}
+        return {
+            "id_transaccion":  getattr(resp, "id_transaccion", None),
+            "numero_operacion": getattr(resp, "numero_operacion", numero_operacion),
+            "id_resp":         resp.id_resp,
+            "respuesta":       resp.respuesta,
+        }
 
     # ------------------------------------------------------------------
     # Helpers
@@ -461,7 +467,8 @@ class EpagosClient:
 
         operacion = DatosOp(
             numero_operacion        = nop,
-            identificador_externo_2 = identificador_cliente,
+            identificador_cliente   = identificador_cliente,
+            identificador_externo_2 = "",
             identificador_externo_3 = "",
             id_moneda_operacion     = 1,
             monto_operacion         = float(importe),
