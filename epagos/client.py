@@ -262,10 +262,8 @@ class EpagosClient:
         dni_pagador:      int,
         cuit_pagador:     int,
         fecha_vencimiento: Optional[date] = None,
-        identificador_cliente: str = "",
-        identificador_externo_2: str = "",
+        identificador_cliente: str = "",    # se envía en identificador_externo_2
         identificador_externo_3: str = "",
-        tipo_operacion: int = 0,
     ):
         DetallePago      = self._tipo("DetallePago")
         IdentPagador     = self._tipo("IdentificacionPagador")
@@ -280,7 +278,7 @@ class EpagosClient:
             fechanac_pagador       = date(1900, 1, 1),
             email_pagador          = email_pagador,
             identificacion_pagador = IdentPagador(
-                tipo_doc_pagador   = 96,         # 96 = DNI
+                tipo_doc_pagador   = 96,
                 numero_doc_pagador = dni_pagador,
                 cuit_doc_pagador   = cuit_pagador,
             ),
@@ -300,22 +298,23 @@ class EpagosClient:
             cbu_pagador = "",
         )
 
+        venc = fecha_vencimiento or date(2099, 12, 31)
         return DatosOperacion(
-            numero_operacion        = numero_operacion,
-            identificador_cliente   = identificador_cliente,   # campo dedicado (doc v2)
-            identificador_externo_2 = identificador_externo_2,
-            identificador_externo_3 = identificador_externo_3,
-            id_moneda_operacion     = 1,
-            monto_operacion         = float(importe),
-            opc_pdf                 = False,
-            opc_fecha_vencimiento   = fecha_vencimiento or date(2099, 12, 31),
-            opc_devolver_qr         = False,
-            opc_devolver_codbarras  = False,
-            tipo_operacion          = tipo_operacion,
-            detalle_operacion       = [DetallePago(
-                id_item     = 1,
-                desc_item   = descripcion or "Cobro recurrente",
-                monto_item  = float(importe),
+            numero_operacion         = numero_operacion,
+            identificador_externo_2  = identificador_cliente,
+            identificador_externo_3  = identificador_externo_3,
+            id_moneda_operacion      = 1,
+            monto_operacion          = float(importe),
+            opc_pdf                  = False,
+            opc_fecha_vencimiento    = venc,
+            opc_devolver_qr          = False,
+            opc_devolver_codbarras   = False,
+            fecha_2do_venc           = venc,
+            monto_operacion_2do_venc = 0.0,
+            detalle_operacion        = [DetallePago(
+                id_item       = 1,
+                desc_item     = descripcion or "Cobro recurrente",
+                monto_item    = float(importe),
                 cantidad_item = 1,
             )],
             pagador = pagador,
@@ -466,20 +465,21 @@ class EpagosClient:
         )
 
         operacion = DatosOp(
-            numero_operacion        = nop,
-            identificador_cliente   = identificador_cliente,
-            identificador_externo_2 = "",
-            identificador_externo_3 = "",
-            id_moneda_operacion     = 1,
-            monto_operacion         = float(importe),
-            opc_pdf                 = False,
-            opc_fecha_vencimiento   = date(2099, 12, 31),
-            opc_devolver_qr         = False,
-            opc_devolver_codbarras  = False,
-            detalle_operacion       = [DetallePago(
-                id_item     = 1,
-                desc_item   = descripcion or "Adhesión débito directo",
-                monto_item  = float(importe),
+            numero_operacion         = nop,
+            identificador_externo_2  = identificador_cliente,
+            identificador_externo_3  = "",
+            id_moneda_operacion      = 1,
+            monto_operacion          = float(importe),
+            opc_pdf                  = False,
+            opc_fecha_vencimiento    = date(2099, 12, 31),
+            opc_devolver_qr          = False,
+            opc_devolver_codbarras   = False,
+            fecha_2do_venc           = date(2099, 12, 31),
+            monto_operacion_2do_venc = 0.0,
+            detalle_operacion        = [DetallePago(
+                id_item       = 1,
+                desc_item     = descripcion or "Adhesión débito directo",
+                monto_item    = float(importe),
                 cantidad_item = 1,
             )],
             pagador = pagador,
