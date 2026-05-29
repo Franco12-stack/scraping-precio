@@ -2,7 +2,7 @@ import os
 from datetime import date, datetime
 from typing import Any, Optional
 
-from zeep import Client, Settings
+from zeep import Client, Settings, xsd
 from zeep.transports import Transport
 from requests import Session
 
@@ -340,51 +340,40 @@ class EpagosClient:
         DatosPagador   = self._tipo_v2("DatosPagadorPago")
         DatosOperacion = self._tipo_v2("DatosOperacionPago")
 
+        # Solo email_pagador — igual que el XML de referencia de ePagos
         pagador = DatosPagador(
-            nombre_pagador         = nombre_pagador,
-            apellido_pagador       = apellido_pagador,
-            fechanac_pagador       = date(1900, 1, 1),
+            nombre_pagador         = xsd.SkipValue,
+            apellido_pagador       = xsd.SkipValue,
+            fechanac_pagador       = xsd.SkipValue,
             email_pagador          = email_pagador,
-            identificacion_pagador = IdentPagador(
-                tipo_doc_pagador   = 96,
-                numero_doc_pagador = dni_pagador,
-                cuit_doc_pagador   = cuit_pagador,
-            ),
-            domicilio_pagador = DomPagador(
-                calle_dom_pagador     = "",
-                numero_dom_pagador    = "",
-                adicional_dom_pagador = "",
-                cp_dom_pagador        = "",
-                ciudad_dom_pagador    = "",
-                provincia_dom_pagador = 1,
-                pais_dom_pagador      = 54,
-            ),
-            telefono_pagador = TelPagador(codigo_telef_pagador=0, numero_telef_pagador=0),
-            cbu_pagador = "",
+            identificacion_pagador = xsd.SkipValue,
+            domicilio_pagador      = xsd.SkipValue,
+            telefono_pagador       = xsd.SkipValue,
+            cbu_pagador            = xsd.SkipValue,
         )
 
-        venc = date(2099, 12, 31)
+        # Solo los campos del XML de referencia de ePagos
         return DatosOperacion(
             numero_operacion         = numero_operacion,
+            identificador_externo_2  = xsd.SkipValue,
+            identificador_externo_3  = xsd.SkipValue,
+            identificador_externo_4  = xsd.SkipValue,
+            url_boleta               = xsd.SkipValue,
             identificador_cliente    = identificador_cliente,
-            identificador_externo_2  = identificador_cliente,
-            identificador_externo_3  = "",
-            identificador_externo_4  = "",
-            url_boleta               = "",
             id_moneda_operacion      = 1,
             monto_operacion          = float(importe),
-            opc_pdf                  = False,
-            opc_fecha_vencimiento    = venc,
-            opc_devolver_qr          = False,
-            opc_devolver_codbarras   = False,
-            opc_generar_pdf          = False,
-            fecha_2do_venc           = venc,
-            monto_operacion_2do_venc = 0.0,
-            tipo_operacion           = 0,
-            codigo_publicacion       = 0,
-            opc_T30_cerrado          = False,
-            opc_T30_reutilizable     = False,
-            opc_T30_require_orden    = False,
+            opc_pdf                  = xsd.SkipValue,
+            opc_fecha_vencimiento    = xsd.SkipValue,
+            opc_devolver_qr          = xsd.SkipValue,
+            opc_devolver_codbarras   = xsd.SkipValue,
+            opc_generar_pdf          = xsd.SkipValue,
+            fecha_2do_venc           = xsd.SkipValue,
+            monto_operacion_2do_venc = xsd.SkipValue,
+            tipo_operacion           = xsd.SkipValue,
+            codigo_publicacion       = xsd.SkipValue,
+            opc_T30_cerrado          = xsd.SkipValue,
+            opc_T30_reutilizable     = xsd.SkipValue,
+            opc_T30_require_orden    = xsd.SkipValue,
             detalle_operacion        = [DetallePago(
                 id_item       = 1,
                 desc_item     = descripcion or "Cobro recurrente",
@@ -428,7 +417,7 @@ class EpagosClient:
         SuscCliente = self._tipo_v2("SuscripcionCliente")
         cliente_sus = SuscCliente(
             identificador_cliente = identificador_cliente,
-            identificador_tarjeta = "",
+            identificador_tarjeta = xsd.SkipValue,
             identificador_cuenta  = identificador_cuenta,
         )
 
@@ -479,7 +468,7 @@ class EpagosClient:
         SuscCliente = self._tipo_v2("SuscripcionCliente")
         cliente_sus = SuscCliente(
             identificador_cliente = identificador_cliente,
-            identificador_tarjeta = "",
+            identificador_tarjeta = xsd.SkipValue,
             identificador_cuenta  = identificador_cuenta,
         )
 
