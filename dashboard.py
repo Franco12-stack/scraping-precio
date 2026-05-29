@@ -745,6 +745,20 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
         }
 
 
+@router.delete("/api/cuentas/{cuenta_id}")
+def api_eliminar_cuenta(request: Request, cuenta_id: int):
+    err = _api_require_auth(request)
+    if err:
+        return err
+    with get_session() as db:
+        cuenta = db.get(Cuenta, cuenta_id)
+        if not cuenta:
+            return JSONResponse({"error": "Cuenta no encontrada"}, status_code=404)
+        db.delete(cuenta)
+        db.commit()
+    return {"ok": True}
+
+
 @router.get("/api/cobros")
 def api_listar_cobros(request: Request, estado: Optional[str] = None):
     err = _api_require_auth(request)

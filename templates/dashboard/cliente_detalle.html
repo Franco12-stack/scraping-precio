@@ -200,12 +200,13 @@
                 <th>CBU</th>
                 <th>Alias</th>
                 <th>Sincronizado</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               <template x-if="cliente.cuentas.length === 0">
                 <tr>
-                  <td colspan="4" class="text-center text-muted py-3">
+                  <td colspan="5" class="text-center text-muted py-3">
                     Sin CBU registrados. Hacé clic en <strong>Sincronizar CBU</strong> para traer las cuentas de ePagos.
                   </td>
                 </tr>
@@ -216,6 +217,14 @@
                   <td class="font-monospace small" x-text="c.cbu || '—'"></td>
                   <td class="text-muted small" x-text="c.alias || '—'"></td>
                   <td class="text-muted small" x-text="fmtFecha(c.sincronizado_en)"></td>
+                  <td class="text-end">
+                    <button class="btn btn-sm btn-outline-danger"
+                            @click="eliminarCuenta(c)"
+                            :disabled="eliminandoCuenta === c.id">
+                      <span x-show="eliminandoCuenta !== c.id"><i class="bi bi-trash3"></i></span>
+                      <span x-show="eliminandoCuenta === c.id" class="spinner-border spinner-sm" role="status"></span>
+                    </button>
+                  </td>
                 </tr>
               </template>
             </tbody>
@@ -288,6 +297,7 @@ function clienteDetalleApp() {
     agregandoCBU: false,
     formCBU: { cbu: '', alias: '' },
     eliminando: false,
+    eliminandoCuenta: null,
     mostrarFormCobro: false,
     enviandoCobro: false,
     hoy: new Date().toISOString().split('T')[0],
@@ -444,6 +454,21 @@ function clienteDetalleApp() {
         showToast('Error de red al generar cobro', 'error');
       } finally {
         this.enviandoCobro = false;
+      }
+    },
+
+    async eliminarCuenta(c) {
+      if (!confirm(`¿Eliminar el CBU ${c.cbu || c.identificador_cuenta}? Solo se borra de la BD local.`)) return;
+      this.eliminandoCuenta = c.id;
+      try {
+        const res = await fetch('/api/cuentas/' + c.id, { method: 'DELETE' });
+        if (!res.ok) { showToast('Error al eliminar CBU', 'error'); return; }
+        this.cliente.cuentas = this.cliente.cuentas.filter(x => x.id !== c.id);
+        showToast('CBU eliminado');
+      } catch (e) {
+        showToast('Error de red: ' + e.message, 'error');
+      } finally {
+        this.eliminandoCuenta = null;
       }
     },
 
