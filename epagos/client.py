@@ -82,8 +82,9 @@ class EpagosClient:
         wsdl = WSDL_SANDBOX if self.entorno == "sandbox" else WSDL_PRODUCCION
         settings = Settings(strict=False, xml_huge_tree=True)
         self._soap = Client(wsdl, settings=settings, transport=Transport(session=Session()))
-        self._token: Optional[str] = None
-        self._soap_v2: Optional[Any] = None   # lazy — solo para registrar_cuentas_cliente
+        self._token:    Optional[str] = None
+        self._soap_v2:  Optional[Any] = None   # lazy — solo para registrar_cuentas_cliente
+        self._token_v2: Optional[str] = None   # token independiente para v2.1
 
         # Tipos WSDL cacheados
         self._t = {}
@@ -173,6 +174,20 @@ class EpagosClient:
             self._soap_v2 = Client(wsdl, settings=settings, transport=Transport(session=Session()))
         return self._soap_v2
 
+    def _token_valido_v2(self) -> str:
+        """Obtiene (o reutiliza) un token autenticado contra el endpoint v2.1."""
+        if not self._token_v2:
+            creds = {
+                "id_usuario":   self.id_usuario,
+                "id_organismo": self.id_organismo,
+                "password":     self.password,
+                "hash":         self.hash_auth,
+            }
+            resp = self._v2().service.obtener_token(API_VERSION_V2, creds)
+            self._validar(resp.id_resp, resp.respuesta)
+            self._token_v2 = str(resp.token)
+        return self._token_v2
+
     def registrar_cuenta_cliente(
         self,
         identificador_cliente: str,
@@ -187,7 +202,7 @@ class EpagosClient:
         """
         resp = self._v2().service.registrar_cuentas_cliente(
             API_VERSION_V2,
-            {"id_organismo": self.id_organismo, "token": self._token_valido()},
+            {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
             [{
                 "identificador_cliente": identificador_cliente,
                 "tipo_operacion":        tipo_operacion,
