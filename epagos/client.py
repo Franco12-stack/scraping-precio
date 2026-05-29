@@ -344,11 +344,12 @@ class EpagosClient:
         )
 
         return DatosOperacion(
-            numero_operacion      = numero_operacion,
-            identificador_cliente = identificador_cliente,
-            id_moneda_operacion   = 1,
-            monto_operacion       = str(float(importe)),
-            detalle_operacion     = [DetallePago(
+            numero_operacion        = numero_operacion,
+            identificador_cliente   = identificador_cliente,
+            identificador_externo_2 = identificador_cliente,
+            id_moneda_operacion     = 1,
+            monto_operacion         = str(float(importe)),
+            detalle_operacion       = [DetallePago(
                 id_item       = 1,
                 desc_item     = descripcion or "Cobro recurrente",
                 monto_item    = float(importe),
