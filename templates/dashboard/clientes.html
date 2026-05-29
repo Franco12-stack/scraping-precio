@@ -290,7 +290,13 @@ function clientesApp() {
         this.clientes.unshift(data);
         this.mostrarFormulario = false;
         this._resetForm();
-        showToast(guardoCBU ? '✅ Cliente y CBU guardados correctamente' : '✅ Cliente creado correctamente');
+        if (!guardoCBU) {
+          showToast('✅ Cliente creado correctamente');
+        } else if (dataCBU && dataCBU.epagos_ok) {
+          showToast('✅ Cliente y CBU registrados en ePagos. ID: ' + dataCBU.cuenta.identificador_cuenta);
+        } else {
+          showToast('⚠️ Cliente creado, CBU solo local (ePagos: ' + (dataCBU && dataCBU.advertencia || 'sin respuesta') + ')', 'error');
+        }
       } catch (e) {
         showToast('Error de red al crear cliente', 'error');
       } finally {

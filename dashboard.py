@@ -714,11 +714,14 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
                 cuit=cliente.cuit,
             )
             epagos_id_cuenta = resultado.get("identificador_cuenta") or None
+            print(f"[agregar_cbu] ePagos OK → identificador_cuenta={epagos_id_cuenta}", flush=True)
         except (EpagosError, Exception) as exc:
             epagos_advertencia = str(exc)
+            print(f"[agregar_cbu] ePagos FALLÓ: {exc}", flush=True)
 
         # Usar el id asignado por ePagos o generar uno local como fallback
         id_cuenta = epagos_id_cuenta or f"CBU-{cbu[-8:]}"
+        epagos_ok = epagos_id_cuenta is not None
         nueva = Cuenta(
             cliente_id=cliente_id,
             identificador_cuenta=id_cuenta,
@@ -730,6 +733,7 @@ async def api_agregar_cbu(request: Request, cliente_id: int):
         db.refresh(nueva)
         return {
             "ok": True,
+            "epagos_ok": epagos_ok,
             "advertencia": epagos_advertencia,
             "cuenta": {
                 "id": nueva.id,
