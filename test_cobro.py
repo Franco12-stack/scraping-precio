@@ -19,8 +19,8 @@ if os.path.exists(_env_path):
 sys.path.insert(0, os.path.dirname(__file__))
 from epagos.client import EpagosClient, EpagosError
 
-CBU_PRUEBA        = "3220002204000040970011"  # CBU DEBIN sandbox
-CUIT_PRUEBA       = 20123456781
+CBU_PRUEBA        = "3220001101000040970011"  # CBU DEBIN sandbox prueba.debin.2
+CUIT_PRUEBA       = 27123456781
 DNI_PRUEBA        = 12345678
 NOMBRE_PRUEBA     = "Juan"
 APELLIDO_PRUEBA   = "Prueba"
