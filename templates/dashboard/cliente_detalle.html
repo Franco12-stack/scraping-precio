@@ -264,13 +264,14 @@
                 <th>Fecha cobro</th>
                 <th>Estado</th>
                 <th>N° Operación</th>
+                <th>ID Transacción</th>
                 <th>Detalle</th>
               </tr>
             </thead>
             <tbody>
               <template x-if="cliente.cobros.length === 0">
                 <tr>
-                  <td colspan="7" class="text-center text-muted py-4">Sin cobros todavía</td>
+                  <td colspan="8" class="text-center text-muted py-4">Sin cobros todavía</td>
                 </tr>
               </template>
               <template x-for="co in cliente.cobros" :key="co.id">
@@ -281,6 +282,7 @@
                   <td class="small" x-text="co.fecha_cobro ? fmtFechaCorta(co.fecha_cobro) : '—'"></td>
                   <td><span :class="'badge badge-estado-' + co.estado" x-text="co.estado"></span></td>
                   <td class="font-monospace small" x-text="co.numero_operacion"></td>
+                  <td class="font-monospace small text-muted" x-text="co.id_transaccion || '—'"></td>
                   <td class="small text-danger" x-text="co.error || ''"></td>
                 </tr>
               </template>
