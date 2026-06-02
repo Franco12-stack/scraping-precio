@@ -320,7 +320,7 @@ def nuevo_cobro(
     cliente_id:   int   = Form(...),
     cuenta_id:    int   = Form(...),
     importe:      float = Form(...),
-    descripcion:  str   = Form("Cobro recurrente"),
+    descripcion:  str   = Form("fundcolab"),
     tipo:         str   = Form("inmediato"),   # inmediato | programado
     fecha_cobro:  Optional[str] = Form(None),
 ):
@@ -810,7 +810,7 @@ async def api_crear_cobro(request: Request):
     cliente_id  = data.get("cliente_id")
     cuenta_id   = data.get("cuenta_id")
     importe     = data.get("importe")
-    descripcion = data.get("descripcion", "Cobro recurrente")
+    descripcion = data.get("descripcion", "fundcolab")
     tipo        = data.get("tipo", "inmediato")
     fecha_cobro = data.get("fecha_cobro")
 
@@ -932,7 +932,7 @@ async def api_cobros_masivo(request: Request):
         return err
 
     data        = await request.json()
-    descripcion = data.get("descripcion", "Cobro recurrente")
+    descripcion = data.get("descripcion", "fundcolab")
     tipo        = data.get("tipo", "inmediato")
     fecha_cobro = data.get("fecha_cobro")
     items       = data.get("cobros", [])

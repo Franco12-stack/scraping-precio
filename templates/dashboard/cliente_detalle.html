@@ -145,7 +145,7 @@
                 <div class="col-md-12">
                   <label class="form-label small fw-semibold">Descripción</label>
                   <input x-model="formCobro.descripcion" class="form-control"
-                         placeholder="Cobro recurrente">
+                         placeholder="fundcolab">
                 </div>
               </div>
               <div class="mt-3 d-flex gap-2 justify-content-end">
@@ -438,7 +438,7 @@ function clienteDetalleApp() {
           cliente_id: this.clienteId,
           cuenta_id: parseInt(this.formCobro.cuenta_id),
           importe: parseFloat(this.formCobro.importe),
-          descripcion: this.formCobro.descripcion || 'Cobro recurrente',
+          descripcion: this.formCobro.descripcion || 'fundcolab',
           tipo: this.formCobro.tipo,
         };
         if (this.formCobro.tipo === 'programado' && this.formCobro.fecha_cobro) {
@@ -470,7 +470,7 @@ function clienteDetalleApp() {
         };
         this.cliente.cobros.unshift(nuevoCobro);
         this.mostrarFormCobro = false;
-        this.formCobro = { cuenta_id: '', importe: '', tipo: 'inmediato', fecha_cobro: '', descripcion: 'Cobro recurrente' };
+        this.formCobro = { cuenta_id: '', importe: '', tipo: 'inmediato', fecha_cobro: '', descripcion: 'fundcolab' };
         const estadoMsg = data.estado === 'error'
           ? `Cobro creado con error: ${data.error}`
           : `Cobro generado. Estado: ${data.estado}`;
