@@ -118,6 +118,18 @@ class EpagosClient:
     def _creds_pago(self) -> dict:
         return {"id_organismo": self.id_organismo, "token": self._token_valido()}
 
+    def _llamar_con_retry_token(self, fn, *args, **kwargs):
+        """Ejecuta una llamada SOAP; si falla con error de token (02003), renueva y reintenta."""
+        try:
+            return fn(*args, **kwargs)
+        except EpagosError as e:
+            if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
+                # Forzar renovación del token y reintentar UNA vez
+                self._token = None
+                self.obtener_token()
+                return fn(*args, **kwargs)
+            raise
+
     # ------------------------------------------------------------------
     # Consulta de pagos
     # ------------------------------------------------------------------
@@ -423,12 +435,25 @@ class EpagosClient:
 
         from datetime import timedelta
         fec_debito = fecha_debito or (date.today() + timedelta(days=7))
-        resp = self._v2().service.solicitud_pago_recurrente(
-            API_VERSION_V2, TIPO_RECURRENTE,
-            {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
-            operacion, conv, medio, cliente_sus, fec_debito,
-        )
-        self._validar(resp.id_resp, resp.respuesta)
+
+        def _llamar():
+            return self._v2().service.solicitud_pago_recurrente(
+                API_VERSION_V2, TIPO_RECURRENTE,
+                {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
+                operacion, conv, medio, cliente_sus, fec_debito,
+            )
+
+        resp = _llamar()
+        # Si el token v2 expiró/se invalidó (02003), renovar y reintentar UNA vez
+        try:
+            self._validar(resp.id_resp, resp.respuesta)
+        except EpagosError as e:
+            if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
+                self._token_v2 = None
+                resp = _llamar()
+                self._validar(resp.id_resp, resp.respuesta)
+            else:
+                raise
         return {
             "id_transaccion":   resp.id_transaccion,
             "numero_operacion": resp.numero_operacion,
@@ -472,13 +497,24 @@ class EpagosClient:
             identificador_cuenta  = identificador_cuenta,
         )
 
-        resp = self._v2().service.solicitud_pago_recurrente_suscripcion(
-            API_VERSION_V2, TIPO_RECURRENTE,
-            {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
-            operacion, ArraySusc, modalidad, descripcion,
-            conv, medio, [cliente_sus],
-        )
-        self._validar(resp.id_resp, resp.respuesta)
+        def _llamar():
+            return self._v2().service.solicitud_pago_recurrente_suscripcion(
+                API_VERSION_V2, TIPO_RECURRENTE,
+                {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
+                operacion, ArraySusc, modalidad, descripcion,
+                conv, medio, [cliente_sus],
+            )
+
+        resp = _llamar()
+        try:
+            self._validar(resp.id_resp, resp.respuesta)
+        except EpagosError as e:
+            if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
+                self._token_v2 = None
+                resp = _llamar()
+                self._validar(resp.id_resp, resp.respuesta)
+            else:
+                raise
         return {
             "id_transaccion":  getattr(resp, "id_transaccion", None),
             "numero_operacion": getattr(resp, "numero_operacion", numero_operacion),

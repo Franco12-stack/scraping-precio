@@ -4,11 +4,24 @@
 {% block content %}
 <div x-data="masivosApp()" x-init="init()" x-cloak>
 
-  <div class="d-flex justify-content-between align-items-center mb-4">
+  <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
     <div>
       <h4 class="fw-bold mb-0"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>Cobros Masivos</h4>
       <small class="text-muted">Cobrá a todos los CBU registrados de una sola vez</small>
     </div>
+    <button class="btn btn-outline-danger"
+            @click="reintentarFallidos()"
+            :disabled="reintentando"
+            x-show="cobrosFallidos > 0">
+      <span x-show="!reintentando">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>
+        Reintentar cobros fallidos
+        <span class="badge bg-danger ms-1" x-text="cobrosFallidos"></span>
+      </span>
+      <span x-show="reintentando">
+        <span class="spinner-border spinner-border-sm me-1"></span>Reintentando…
+      </span>
+    </button>
   </div>
 
   <!-- Configuración del cobro -->
@@ -218,6 +231,8 @@ function masivosApp() {
     ejecutando: false,
     progreso: 0,
     resultados: [],
+    cobrosFallidos: 0,
+    reintentando: false,
     exitosos: 0,
     fallidos: 0,
 
@@ -248,6 +263,32 @@ function masivosApp() {
           this.sinCBU.push(cl);
         }
       });
+      this.cargarFallidos();
+    },
+
+    async cargarFallidos() {
+      try {
+        const res = await fetch('/api/cobros/pendientes_reintento');
+        if (res.ok) {
+          const d = await res.json();
+          this.cobrosFallidos = d.pendientes || 0;
+        }
+      } catch (e) {}
+    },
+
+    async reintentarFallidos() {
+      if (!confirm(`¿Reintentar ${this.cobrosFallidos} cobros fallidos?`)) return;
+      this.reintentando = true;
+      try {
+        const res = await fetch('/api/cobros/reintentar_fallidos', { method: 'POST' });
+        const data = await res.json();
+        this.cobrosFallidos = data.fallidos || 0;
+        showToast(`✅ ${data.exitosos} reintentados OK · ⚠️ ${data.fallidos} aún fallidos`);
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      } finally {
+        this.reintentando = false;
+      }
     },
 
     get seleccionados() {

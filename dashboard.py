@@ -1259,6 +1259,114 @@ async def api_cobros_masivo(request: Request):
     return {"total": len(items), "exitosos": exitosos, "fallidos": fallidos, "resultados": resultados}
 
 
+@router.get("/api/cobros/pendientes_reintento")
+def api_cobros_pendientes_reintento(request: Request):
+    """Cuenta cuántos cobros están en estado error y se pueden reintentar."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+    with get_session() as db:
+        total = db.query(func.count(Cobro.id)).filter(Cobro.estado == "error").scalar() or 0
+        return {"pendientes": total}
+
+
+@router.post("/api/cobros/reintentar_fallidos")
+def api_reintentar_cobros_fallidos(request: Request):
+    """Reintenta todos los cobros que quedaron en estado 'error'."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    with get_session() as db:
+        cobros_err = db.query(Cobro).filter(Cobro.estado == "error").all()
+        ids = [(c.id, c.cliente_id, c.cuenta_id, c.importe, c.descripcion, c.tipo,
+                c.fecha_cobro, c.numero_operacion) for c in cobros_err]
+
+    total = len(ids)
+    print(f"[reintentar_cobros] Iniciando reintento de {total} cobros fallidos", flush=True)
+
+    ep = _epagos()
+    exitosos = fallidos = 0
+
+    for idx, (cobro_id, cliente_id, cuenta_id, importe, descripcion, tipo,
+              fecha_cobro_db, numero_op) in enumerate(ids, 1):
+        # Cargar datos cliente/cuenta (sesión corta)
+        with get_session() as db:
+            cliente = db.get(Cliente, cliente_id)
+            cuenta  = db.get(Cuenta, cuenta_id) if cuenta_id else None
+            if not cliente or not cuenta:
+                fallidos += 1
+                continue
+            datos_cliente = {
+                "identificador_cliente": cliente.identificador_cliente,
+                "identificador_cuenta":  cuenta.identificador_cuenta,
+                "nombre":   cliente.nombre,
+                "apellido": cliente.apellido,
+                "email":    cliente.email,
+                "dni":      cliente.dni,
+                "cuit":     cliente.cuit,
+            }
+
+        # Llamar ePagos FUERA de sesión DB
+        nuevo_estado = "error"
+        nuevo_error  = None
+        id_trans     = None
+        try:
+            if tipo == "programado" and fecha_cobro_db:
+                res = ep.solicitud_pago_recurrente_suscripcion(
+                    identificador_cliente=datos_cliente["identificador_cliente"],
+                    identificador_cuenta=datos_cliente["identificador_cuenta"],
+                    importe=float(importe), numero_operacion=numero_op,
+                    fecha_cobro=fecha_cobro_db,
+                    nombre_pagador=datos_cliente["nombre"],
+                    apellido_pagador=datos_cliente["apellido"],
+                    email_pagador=datos_cliente["email"],
+                    dni_pagador=datos_cliente["dni"],
+                    cuit_pagador=datos_cliente["cuit"],
+                    descripcion=descripcion or "fundcolab",
+                )
+                nuevo_estado = "programado"
+            else:
+                res = ep.solicitud_pago_recurrente(
+                    identificador_cliente=datos_cliente["identificador_cliente"],
+                    identificador_cuenta=datos_cliente["identificador_cuenta"],
+                    importe=float(importe), numero_operacion=numero_op,
+                    nombre_pagador=datos_cliente["nombre"],
+                    apellido_pagador=datos_cliente["apellido"],
+                    email_pagador=datos_cliente["email"],
+                    dni_pagador=datos_cliente["dni"],
+                    cuit_pagador=datos_cliente["cuit"],
+                    descripcion=descripcion or "fundcolab",
+                )
+                nuevo_estado = "pendiente"
+            id_trans = str(res.get("id_transaccion") or "")
+            exitosos += 1
+            print(f"[reintentar_cobros] {idx}/{total} OK {datos_cliente['apellido']} → {numero_op}", flush=True)
+        except (EpagosError, Exception) as exc:
+            nuevo_error = str(exc)
+            fallidos += 1
+            print(f"[reintentar_cobros] {idx}/{total} FALLO {datos_cliente['apellido']}: {exc}", flush=True)
+
+        # Guardar resultado (sesión corta)
+        try:
+            with get_session() as db:
+                c = db.get(Cobro, cobro_id)
+                if c:
+                    c.estado = nuevo_estado
+                    if id_trans:
+                        c.id_transaccion = id_trans
+                    if nuevo_error:
+                        c.error = nuevo_error
+                    else:
+                        c.error = None
+                    db.commit()
+        except Exception as exc_db:
+            print(f"[reintentar_cobros] {idx}/{total} error guardando DB: {exc_db}", flush=True)
+
+    print(f"[reintentar_cobros] FIN — total={total} exitosos={exitosos} fallidos={fallidos}", flush=True)
+    return {"total": total, "exitosos": exitosos, "fallidos": fallidos}
+
+
 # ---------------------------------------------------------------------------
 # Usuarios (solo admin)
 # ---------------------------------------------------------------------------
