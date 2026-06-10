@@ -3,6 +3,7 @@ Dashboard web para gestión de cobros ePagos.
 """
 import hashlib
 import io
+import json
 import os
 import secrets
 import uuid
@@ -1134,7 +1135,7 @@ def cobros_masivo_page(request: Request):
 
 @router.post("/api/cobros/masivo")
 async def api_cobros_masivo(request: Request):
-    """Genera cobros en lote. Body: {descripcion, tipo, fecha_cobro, cobros:[{cliente_id,cuenta_id,importe}]}"""
+    """Genera cobros en lote (SSE). Body: {descripcion, tipo, fecha_cobro, cobros:[{cliente_id,cuenta_id,importe}]}"""
     err = _api_require_auth(request)
     if err:
         return err
@@ -1148,115 +1149,165 @@ async def api_cobros_masivo(request: Request):
     if not items:
         return JSONResponse({"error": "No hay cobros para procesar"}, status_code=422)
 
-    resultados = []
-    exitosos = fallidos = 0
-
     total_items = len(items)
     print(f"[cobros_masivo] Iniciando lote de {total_items} cobros", flush=True)
 
-    with get_session() as db:
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj)}\n\n"
+
+    def generate():
+        exitosos = 0
+        fallidos = 0
         ep = _epagos()
+
         for idx, item in enumerate(items, 1):
             cliente_id = item.get("cliente_id")
             cuenta_id  = item.get("cuenta_id")
             importe    = item.get("importe")
+            result_row = {
+                "cliente_id": cliente_id, "cliente_nombre": "—",
+                "estado": "error", "numero_operacion": None,
+                "importe": importe, "error": None,
+            }
 
             if not all([cliente_id, cuenta_id, importe]):
-                resultados.append({"cliente_id": cliente_id, "cliente_nombre": "—",
-                                    "estado": "error", "numero_operacion": None,
-                                    "error": "Faltan datos"})
+                result_row["error"] = "Faltan datos"
                 fallidos += 1
+                yield _sse({"type": "progress", "idx": idx, "total": total_items,
+                            "exitosos": exitosos, "fallidos": fallidos, "result": result_row})
                 continue
 
-            cliente = db.get(Cliente, int(cliente_id))
-            cuenta  = db.get(Cuenta,  int(cuenta_id))
-            if not cliente or not cuenta:
-                resultados.append({"cliente_id": cliente_id,
-                                    "cliente_nombre": str(cliente_id),
-                                    "estado": "error", "numero_operacion": None,
-                                    "error": "Cliente o cuenta no encontrados"})
-                fallidos += 1
-                continue
+            # Cargar cliente/cuenta y registrar CBU si hace falta (sesión corta)
+            id_cliente = id_cuenta = nombre = apellido = email = dni = cuit = cbu = None
+            try:
+                with get_session() as db:
+                    cliente = db.get(Cliente, int(cliente_id))
+                    cuenta  = db.get(Cuenta,  int(cuenta_id))
+                    if not cliente or not cuenta:
+                        result_row["error"] = "Cliente o cuenta no encontrados"
+                        fallidos += 1
+                        yield _sse({"type": "progress", "idx": idx, "total": total_items,
+                                    "exitosos": exitosos, "fallidos": fallidos, "result": result_row})
+                        continue
 
-            # Si el CBU no está registrado en ePagos (sin UUID), intentar registrar ahora
-            _id = cuenta.identificador_cuenta or ""
-            _necesita_registro = cuenta.cbu and (
-                _id == cuenta.cbu                        # CBU crudo exacto
-                or _id.startswith("CBU-")               # fallback con prefijo CBU-
-                or (len(_id) == 22 and _id.isdigit())   # CBU de 22 dígitos sin prefijo
-            )
-            if _necesita_registro:
-                try:
-                    res_reg = ep.registrar_cuenta_cliente(
-                        identificador_cliente=cliente.identificador_cliente,
-                        cbu=cuenta.cbu,
-                        cuit=cliente.cuit,
+                    id_cliente = cliente.identificador_cliente
+                    nombre     = cliente.nombre
+                    apellido   = cliente.apellido
+                    email      = cliente.email
+                    dni        = cliente.dni
+                    cuit       = cliente.cuit
+                    id_cuenta  = cuenta.identificador_cuenta or ""
+                    cbu        = cuenta.cbu
+
+                    _id = id_cuenta
+                    _necesita_registro = cbu and (
+                        _id == cbu
+                        or _id.startswith("CBU-")
+                        or (len(_id) == 22 and _id.isdigit())
                     )
-                    nuevo_id = res_reg.get("identificador_cuenta")
-                    if nuevo_id:
-                        cuenta.identificador_cuenta = nuevo_id
-                        db.flush()
-                except Exception:
-                    pass
+                    if _necesita_registro:
+                        try:
+                            res_reg = ep.registrar_cuenta_cliente(
+                                identificador_cliente=id_cliente, cbu=cbu, cuit=cuit)
+                            nuevo_id = res_reg.get("identificador_cuenta")
+                            if nuevo_id:
+                                cuenta.identificador_cuenta = nuevo_id
+                                id_cuenta = nuevo_id
+                        except Exception:
+                            pass
+                    db.commit()
+            except Exception as exc_db:
+                result_row["error"] = f"Error DB: {exc_db}"
+                fallidos += 1
+                yield _sse({"type": "progress", "idx": idx, "total": total_items,
+                            "exitosos": exitosos, "fallidos": fallidos, "result": result_row})
+                continue
 
+            result_row["cliente_nombre"] = f"{apellido}, {nombre}"
             numero_op = f"OP-{uuid.uuid4().hex[:12].upper()}"
-            cobro = Cobro(cliente_id=int(cliente_id), cuenta_id=int(cuenta_id),
-                          numero_operacion=numero_op, importe=float(importe),
-                          descripcion=descripcion, tipo=tipo,
-                          fecha_cobro=date.fromisoformat(fecha_cobro) if fecha_cobro else None,
-                          estado="enviado")
-            db.add(cobro)
-            db.flush()
+            result_row["numero_operacion"] = numero_op
+
+            # Crear cobro en DB estado "enviado" (sesión corta)
+            cobro_id = None
+            try:
+                with get_session() as db:
+                    cobro = Cobro(
+                        cliente_id=int(cliente_id), cuenta_id=int(cuenta_id),
+                        numero_operacion=numero_op, importe=float(importe),
+                        descripcion=descripcion, tipo=tipo,
+                        fecha_cobro=date.fromisoformat(fecha_cobro) if fecha_cobro else None,
+                        estado="enviado",
+                    )
+                    db.add(cobro)
+                    db.commit()
+                    cobro_id = cobro.id
+            except Exception as exc_db:
+                result_row["error"] = f"Error DB cobro: {exc_db}"
+                fallidos += 1
+                yield _sse({"type": "progress", "idx": idx, "total": total_items,
+                            "exitosos": exitosos, "fallidos": fallidos, "result": result_row})
+                continue
+
+            # Llamar ePagos fuera de sesión DB
+            id_transaccion = ""
+            estado_cobro   = "error"
+            error_msg      = None
             try:
                 if tipo == "programado" and fecha_cobro:
                     res_sus = ep.solicitud_pago_recurrente_suscripcion(
-                        identificador_cliente=cliente.identificador_cliente,
-                        identificador_cuenta=cuenta.identificador_cuenta,
+                        identificador_cliente=id_cliente, identificador_cuenta=id_cuenta,
                         importe=float(importe), numero_operacion=numero_op,
                         fecha_cobro=date.fromisoformat(fecha_cobro),
-                        nombre_pagador=cliente.nombre, apellido_pagador=cliente.apellido,
-                        email_pagador=cliente.email, dni_pagador=cliente.dni,
-                        cuit_pagador=cliente.cuit, descripcion=descripcion)
-                    cobro.id_transaccion = str(res_sus.get("id_transaccion") or "")
-                    cobro.estado = "programado"
+                        nombre_pagador=nombre, apellido_pagador=apellido,
+                        email_pagador=email, dni_pagador=dni,
+                        cuit_pagador=cuit, descripcion=descripcion)
+                    id_transaccion = str(res_sus.get("id_transaccion") or "")
+                    estado_cobro = "programado"
                 else:
                     res = ep.solicitud_pago_recurrente(
-                        identificador_cliente=cliente.identificador_cliente,
-                        identificador_cuenta=cuenta.identificador_cuenta,
+                        identificador_cliente=id_cliente, identificador_cuenta=id_cuenta,
                         importe=float(importe), numero_operacion=numero_op,
-                        nombre_pagador=cliente.nombre, apellido_pagador=cliente.apellido,
-                        email_pagador=cliente.email, dni_pagador=cliente.dni,
-                        cuit_pagador=cliente.cuit, descripcion=descripcion)
-                    cobro.id_transaccion = str(res.get("id_transaccion", ""))
-                    cobro.estado = "pendiente"
+                        nombre_pagador=nombre, apellido_pagador=apellido,
+                        email_pagador=email, dni_pagador=dni,
+                        cuit_pagador=cuit, descripcion=descripcion)
+                    id_transaccion = str(res.get("id_transaccion", ""))
+                    estado_cobro = "pendiente"
                 exitosos += 1
-                resultados.append({"cliente_id": cliente.id,
-                                    "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
-                                    "importe": float(importe), "estado": cobro.estado,
-                                    "numero_operacion": numero_op, "error": None})
-                print(f"[cobros_masivo] {idx}/{total_items} OK {cliente.apellido} ({cliente.identificador_cliente}) ${importe} → {numero_op}", flush=True)
-            except EpagosError as e:
-                cobro.estado = "error"
-                cobro.error  = str(e)
+                result_row["estado"] = estado_cobro
+                print(f"[cobros_masivo] {idx}/{total_items} OK {apellido} ({id_cliente}) ${importe} → {numero_op}", flush=True)
+            except (EpagosError, Exception) as e:
+                estado_cobro = "error"
+                error_msg    = str(e)
+                result_row["estado"] = "error"
+                result_row["error"]  = error_msg
                 fallidos += 1
-                resultados.append({"cliente_id": cliente.id,
-                                    "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
-                                    "importe": float(importe), "estado": "error",
-                                    "numero_operacion": numero_op, "error": str(e)})
-                print(f"[cobros_masivo] {idx}/{total_items} FALLO {cliente.apellido} ({cliente.identificador_cliente}): {e}", flush=True)
-            except Exception as exc:
-                cobro.estado = "error"
-                cobro.error  = f"Error al conectar con ePagos: {exc}"
-                fallidos += 1
-                resultados.append({"cliente_id": cliente.id,
-                                    "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
-                                    "importe": float(importe), "estado": "error",
-                                    "numero_operacion": numero_op, "error": cobro.error})
-                print(f"[cobros_masivo] {idx}/{total_items} ERROR {cliente.apellido} ({cliente.identificador_cliente}): {exc}", flush=True)
-        db.commit()
+                print(f"[cobros_masivo] {idx}/{total_items} FALLO {apellido} ({id_cliente}): {e}", flush=True)
 
-    print(f"[cobros_masivo] FIN — total={total_items} exitosos={exitosos} fallidos={fallidos}", flush=True)
-    return {"total": len(items), "exitosos": exitosos, "fallidos": fallidos, "resultados": resultados}
+            # Guardar estado final del cobro (sesión corta)
+            if cobro_id:
+                try:
+                    with get_session() as db:
+                        c = db.get(Cobro, cobro_id)
+                        if c:
+                            c.estado = estado_cobro
+                            c.id_transaccion = id_transaccion
+                            if error_msg:
+                                c.error = error_msg
+                            db.commit()
+                except Exception as exc_db:
+                    print(f"[cobros_masivo] {idx} error guardando estado: {exc_db}", flush=True)
+
+            yield _sse({"type": "progress", "idx": idx, "total": total_items,
+                        "exitosos": exitosos, "fallidos": fallidos, "result": result_row})
+
+        print(f"[cobros_masivo] FIN — total={total_items} exitosos={exitosos} fallidos={fallidos}", flush=True)
+        yield _sse({"type": "done", "total": total_items, "exitosos": exitosos, "fallidos": fallidos})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/api/cobros/pendientes_reintento")

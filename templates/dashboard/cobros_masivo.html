@@ -90,47 +90,69 @@
         <i class="bi bi-lightning-charge-fill me-1"></i>
         Cobrar <span x-text="seleccionados.length"></span> cliente(s)
       </span>
-      <span x-show="ejecutando">
-        <span class="spinner-border spinner-border-sm me-1"></span>
-        Procesando <span x-text="progreso"></span> / <span x-text="seleccionados.length"></span>…
+      <span x-show="ejecutando" class="d-flex align-items-center gap-2">
+        <span class="spinner-border spinner-border-sm"></span>
+        Procesando <strong x-text="progreso"></strong>&nbsp;/&nbsp;<strong x-text="totalEnProceso"></strong>
+        <span x-show="exitosos > 0" class="badge bg-success"><span x-text="exitosos"></span> OK</span>
+        <span x-show="fallidos > 0" class="badge bg-danger"><span x-text="fallidos"></span> err</span>
       </span>
     </button>
   </div>
 
   <!-- Barra de progreso -->
-  <div x-show="ejecutando || resultados.length > 0" class="mb-3">
-    <div class="progress" style="height:8px">
-      <div class="progress-bar bg-success" :style="'width:' + (resultados.length / Math.max(seleccionados.length,1) * 100) + '%'"></div>
+  <div x-show="ejecutando || totalEnProceso > 0" class="mb-3">
+    <div class="d-flex justify-content-between small mb-1">
+      <span class="text-muted" x-show="ejecutando">Procesando cobros en tiempo real…</span>
+      <span class="text-muted fw-semibold" x-show="!ejecutando && totalEnProceso > 0">Lote finalizado</span>
+      <span x-show="totalEnProceso > 0">
+        <span class="text-success fw-bold" x-text="exitosos"></span> OK ·
+        <span :class="fallidos > 0 ? 'text-danger fw-bold' : 'text-muted'" x-text="fallidos"></span> fallidos ·
+        <span class="text-muted" x-text="progreso + ' / ' + totalEnProceso"></span>
+      </span>
+    </div>
+    <div class="progress" style="height:10px">
+      <div class="progress-bar bg-success"
+           :style="'width:' + (exitosos / Math.max(totalEnProceso, 1) * 100) + '%'"></div>
+      <div class="progress-bar bg-danger"
+           :style="'width:' + (fallidos / Math.max(totalEnProceso, 1) * 100) + '%'"></div>
     </div>
   </div>
 
-  <!-- Resultados del lote -->
+  <!-- Resultado del lote: sólo se muestran los errores -->
+  <template x-if="totalEnProceso > 0 && !ejecutando && exitosos === totalEnProceso">
+    <div class="alert alert-success border-0 d-flex gap-2 align-items-center mb-4">
+      <i class="bi bi-check-circle-fill fs-5"></i>
+      <span>Todos los <strong x-text="totalEnProceso"></strong> cobros procesados correctamente.</span>
+    </div>
+  </template>
+
   <template x-if="resultados.length > 0">
     <div class="card shadow-sm border-0 mb-4">
       <div class="card-header bg-white d-flex justify-content-between align-items-center">
-        <span class="fw-semibold"><i class="bi bi-clipboard-check me-2"></i>Resultado del lote</span>
+        <span class="fw-semibold">
+          <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
+          Cobros con error (<span x-text="resultados.length"></span>)
+        </span>
         <div class="d-flex gap-2">
           <span class="badge bg-success rounded-pill" x-text="exitosos + ' exitosos'"></span>
-          <span class="badge bg-danger rounded-pill" x-show="fallidos > 0" x-text="fallidos + ' fallidos'"></span>
+          <span class="badge bg-danger rounded-pill" x-text="fallidos + ' fallidos'"></span>
         </div>
       </div>
-      <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-          <thead class="table-light">
+      <div class="card-body p-0" style="max-height:400px;overflow-y:auto">
+        <table class="table table-hover mb-0 table-sm">
+          <thead class="table-light sticky-top">
             <tr>
               <th class="ps-3">Cliente</th>
               <th class="text-end">Importe</th>
-              <th>Estado</th>
               <th>N° Operación</th>
-              <th>Detalle</th>
+              <th>Error</th>
             </tr>
           </thead>
           <tbody>
-            <template x-for="r in resultados" :key="r.numero_operacion">
-              <tr>
+            <template x-for="r in resultados" :key="r.numero_operacion || r.cliente_id">
+              <tr class="table-danger">
                 <td class="ps-3 fw-semibold" x-text="r.cliente_nombre"></td>
                 <td class="text-end">$ <span x-text="fmtMonto(r.importe)"></span></td>
-                <td><span :class="'badge badge-estado-' + r.estado" x-text="r.estado"></span></td>
                 <td class="font-monospace small" x-text="r.numero_operacion || '—'"></td>
                 <td class="small text-danger" x-text="r.error || ''"></td>
               </tr>
@@ -230,7 +252,8 @@ function masivosApp() {
     sinCBU: [],
     ejecutando: false,
     progreso: 0,
-    resultados: [],
+    totalEnProceso: 0,
+    resultados: [],   // sólo errores
     cobrosFallidos: 0,
     reintentando: false,
     exitosos: 0,
@@ -329,11 +352,12 @@ function masivosApp() {
         showToast('Elegí una fecha de cobro para el tipo programado', 'error'); return;
       }
 
-      this.ejecutando  = true;
-      this.progreso    = 0;
-      this.resultados  = [];
-      this.exitosos    = 0;
-      this.fallidos    = 0;
+      this.ejecutando     = true;
+      this.progreso       = 0;
+      this.totalEnProceso = sel.length;
+      this.resultados     = [];
+      this.exitosos       = 0;
+      this.fallidos       = 0;
 
       try {
         const body = {
@@ -352,19 +376,59 @@ function masivosApp() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        const data = await res.json();
-        if (!res.ok) { showToast(data.error || 'Error al procesar', 'error'); return; }
 
-        this.resultados = data.resultados;
-        this.exitosos   = data.exitosos;
-        this.fallidos   = data.fallidos;
-        this.progreso   = data.total;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('text/event-stream')) {
+          // Fallback: respuesta de error antes de empezar a transmitir
+          const data = await res.json();
+          showToast(data.error || 'Error al procesar', 'error');
+          return;
+        }
 
-        showToast(`✅ ${data.exitosos} cobro(s) enviados${data.fallidos ? ' · ⚠️ ' + data.fallidos + ' fallido(s)' : ''}`);
+        // Leer stream SSE
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer    = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Separar eventos SSE (terminan en \n\n)
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop(); // último fragmento puede estar incompleto
+
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === 'progress') {
+                this.progreso = ev.idx;
+                this.exitosos = ev.exitosos;
+                this.fallidos = ev.fallidos;
+                // Sólo agregar a tabla si es error
+                if (ev.result && ev.result.estado === 'error') {
+                  this.resultados.push(ev.result);
+                }
+              } else if (ev.type === 'done') {
+                this.progreso = ev.total;
+                this.exitosos = ev.exitosos;
+                this.fallidos = ev.fallidos;
+              }
+            } catch (_) {}
+          }
+        }
+
+        const msg = `✅ ${this.exitosos} cobro(s) enviados` +
+                    (this.fallidos ? ` · ⚠️ ${this.fallidos} fallido(s)` : '');
+        showToast(msg, this.fallidos > 0 ? 'warning' : 'success');
       } catch (e) {
         showToast('Error de conexión: ' + e.message, 'error');
       } finally {
         this.ejecutando = false;
+        this.cargarFallidos();
       }
     },
 
