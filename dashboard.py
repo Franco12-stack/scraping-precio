@@ -1065,6 +1065,21 @@ async def api_cobros_masivo(request: Request):
                 fallidos += 1
                 continue
 
+            # Si identificador_cuenta es el CBU crudo (22 dígitos), registrar en ePagos primero
+            if cuenta.cbu and cuenta.identificador_cuenta == cuenta.cbu:
+                try:
+                    res_reg = ep.registrar_cuenta_cliente(
+                        identificador_cliente=cliente.identificador_cliente,
+                        cbu=cuenta.cbu,
+                        cuit=cliente.cuit,
+                    )
+                    nuevo_id = res_reg.get("identificador_cuenta")
+                    if nuevo_id:
+                        cuenta.identificador_cuenta = nuevo_id
+                        db.flush()
+                except Exception:
+                    pass
+
             numero_op = f"OP-{uuid.uuid4().hex[:12].upper()}"
             cobro = Cobro(cliente_id=int(cliente_id), cuenta_id=int(cuenta_id),
                           numero_operacion=numero_op, importe=float(importe),
