@@ -33,10 +33,10 @@ class Cliente(Base):
 
     id:                    Mapped[int]      = mapped_column(primary_key=True)
     identificador_cliente: Mapped[str]      = mapped_column(String(64), unique=True)
-    nombre:                Mapped[str]      = mapped_column(String(100))
-    apellido:              Mapped[str]      = mapped_column(String(100))
-    email:                 Mapped[str]      = mapped_column(String(200))
-    dni:                   Mapped[int]
+    nombre:                Mapped[str]           = mapped_column(String(100))
+    apellido:              Mapped[str]           = mapped_column(String(100))
+    email:                 Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    dni:                   Mapped[Optional[int]] = mapped_column(nullable=True)
     cuit:                  Mapped[int]
     creado_en:             Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
