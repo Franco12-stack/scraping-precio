@@ -135,7 +135,7 @@
             </th>
             <th>Cliente</th>
             <th>ID ePagos</th>
-            <th>Cuenta CBU</th>
+              <th>CBU bancario</th>
             <th>Importe (ARS)</th>
           </tr>
         </thead>
@@ -155,7 +155,7 @@
               <td class="fw-semibold" x-text="row.apellido + ', ' + row.nombre"></td>
               <td class="font-monospace small text-muted" x-text="row.id_ep"></td>
               <td class="small">
-                <span x-text="row.id_cuenta"></span>
+                <span class="font-monospace" x-text="row.cbu || row.id_cuenta"></span>
                 <span class="text-muted ms-1" x-text="row.alias ? '(' + row.alias + ')' : ''"></span>
               </td>
               <td style="width:180px">
@@ -216,6 +216,7 @@ function masivosApp() {
             apellido:     cl.apellido,
             id_ep:        cl.identificador_cliente,
             id_cuenta:    ct.identificador_cuenta,
+            cbu:          ct.cbu || '',
             alias:        ct.alias,
             importe:      this.config.importe || '',
             seleccionado: true,
