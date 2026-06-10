@@ -2,7 +2,7 @@ from datetime import datetime, date
 from typing import Optional, List
 
 from sqlalchemy import (
-    create_engine, String, DateTime,
+    create_engine, String, DateTime, event,
     Date, ForeignKey, Text, Boolean, func
 )
 from sqlalchemy.orm import (
@@ -10,7 +10,18 @@ from sqlalchemy.orm import (
     relationship, Session
 )
 
-engine = create_engine("sqlite:///./epagos.db", connect_args={"check_same_thread": False})
+engine = create_engine(
+    "sqlite:///./epagos.db",
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_conn, _record):
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA busy_timeout=30000")
+    cur.close()
 
 
 class Base(DeclarativeBase):

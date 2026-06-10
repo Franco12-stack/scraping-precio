@@ -1351,165 +1351,181 @@ async def api_importar_clientes(
 
     resultados = []
 
-    with get_session() as db:
-        for i, row in df.iterrows():
-            fila = int(i) + 2  # +1 encabezado +1 base-1
+    for i, row in df.iterrows():
+        fila = int(i) + 2  # +1 encabezado +1 base-1
 
-            if formato_nuevo:
-                nombre_completo = str(row.get("nombre", "")).strip()
-                cuit_raw        = str(row.get("cuit/cuil", "")).strip()
-                cbu             = str(row.get("cvu/cbu", "")).strip().replace(" ", "").rstrip(".0")
-                alias           = str(row.get("banco", "")).strip()
-
-                # Ignorar filas vacías
-                if not nombre_completo and not cuit_raw:
-                    continue
-
-                if not nombre_completo or not cuit_raw:
-                    resultados.append({
-                        "fila": fila, "nombre": nombre_completo,
-                        "identificador": "", "estado": "error",
-                        "accion_cliente": "", "cbu_estado": "",
-                        "error": "NOMBRE y CUIT/CUIL son obligatorios",
-                    })
-                    continue
-
-                cuit_digits = _normalizar_cuit(cuit_raw)
-                if len(cuit_digits) not in (10, 11):
-                    resultados.append({
-                        "fila": fila, "nombre": nombre_completo,
-                        "identificador": "", "estado": "error",
-                        "accion_cliente": "", "cbu_estado": "",
-                        "error": f"CUIT/CUIL inválido: '{cuit_raw}'",
-                    })
-                    continue
-
-                if len(cuit_digits) == 10:
-                    cuit_digits = cuit_digits.zfill(11)
-
-                cuit       = int(cuit_digits)
-                dni        = _dni_desde_cuit(cuit_digits)
-                nombre     = ""
-                apellido   = nombre_completo
-                email      = ""
-                id_cliente = f"CLI-{cuit_digits}"
-
-            else:
-                nombre     = str(row.get("nombre",   "")).strip()
-                apellido   = str(row.get("apellido", "")).strip()
-                email      = str(row.get("email",    "")).strip()
-                dni_raw    = str(row.get("dni",      "")).strip().rstrip(".0")
-                cuit_raw   = str(row.get("cuit",     "")).strip().rstrip(".0")
-                id_cliente = str(row.get("identificador_cliente", "")).strip()
-                cbu        = str(row.get("cbu",   "")).strip().replace(" ", "").rstrip(".0")
-                alias      = str(row.get("alias", "")).strip()
-
-                if not any([nombre, apellido, email, dni_raw, cuit_raw]):
-                    continue
-
-                if not all([nombre, apellido, email, dni_raw, cuit_raw]):
-                    resultados.append({
-                        "fila": fila, "nombre": f"{apellido}, {nombre}",
-                        "identificador": id_cliente, "estado": "error",
-                        "accion_cliente": "", "cbu_estado": "",
-                        "error": "Campos obligatorios vacíos (nombre, apellido, email, dni, cuit)",
-                    })
-                    continue
-
+        if formato_nuevo:
+            nombre_completo = str(row.get("nombre", "")).strip()
+            cuit_raw        = str(row.get("cuit/cuil", "")).strip()
+            cbu_raw         = str(row.get("cvu/cbu", "")).strip().replace(" ", "")
+            # Manejar representación float de Excel (ej: "1234.0")
+            if "." in cbu_raw and not cbu_raw.startswith("0"):
                 try:
-                    dni  = int(float(dni_raw))
-                    cuit = int(float(cuit_raw))
-                except ValueError:
-                    resultados.append({
-                        "fila": fila, "nombre": f"{apellido}, {nombre}",
-                        "identificador": id_cliente, "estado": "error",
-                        "accion_cliente": "", "cbu_estado": "",
-                        "error": f"DNI '{dni_raw}' o CUIT '{cuit_raw}' no son números válidos",
-                    })
-                    continue
+                    cbu_raw = str(int(float(cbu_raw)))
+                except Exception:
+                    pass
+            cbu   = cbu_raw
+            alias = str(row.get("banco", "")).strip()
 
-                if len(id_cliente) < 6:
-                    id_cliente = f"CLI-{dni}"
+            if not nombre_completo and not cuit_raw:
+                continue
 
-            # ---- Crear o encontrar cliente ----
-            cliente_existente = db.query(Cliente).filter(
-                Cliente.identificador_cliente == id_cliente
-            ).first()
-
-            if cliente_existente:
-                cliente        = cliente_existente
-                accion_cliente = "ya existía"
-            else:
-                por_cuit = db.query(Cliente).filter(Cliente.cuit == cuit).first()
-                if por_cuit:
-                    cliente        = por_cuit
-                    accion_cliente = "ya existía (mismo CUIT)"
-                else:
-                    cliente = Cliente(
-                        identificador_cliente=id_cliente,
-                        nombre=nombre, apellido=apellido,
-                        email=email, dni=dni, cuit=cuit,
-                    )
-                    db.add(cliente)
-                    db.flush()
-                    accion_cliente = "creado"
-
-            # ---- Registrar CBU/CVU si viene ----
-            cbu_estado = ""
-            if cbu and len(cbu) == 22 and cbu.isdigit():
-                existe_cbu = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
-                if existe_cbu:
-                    cbu_estado = "CBU ya registrado"
-                else:
-                    try:
-                        id_cuenta = f"CBU-{cbu}"
-                        if ep:
-                            res_cbu = ep.registrar_cuenta_cliente(
-                                identificador_cliente=cliente.identificador_cliente,
-                                cbu=cbu,
-                                cuit=cliente.cuit,
-                            )
-                            id_cuenta = res_cbu.get("identificador_cuenta") or id_cuenta
-                        db.add(Cuenta(
-                            cliente_id=cliente.id,
-                            identificador_cuenta=id_cuenta,
-                            alias=alias or f"CBU {cbu[-4:]}",
-                            cbu=cbu,
-                        ))
-                        cbu_estado = "CBU registrado"
-                    except (EpagosError, Exception) as exc_ep:
-                        id_cuenta = f"CBU-{cbu}"
-                        db.add(Cuenta(
-                            cliente_id=cliente.id,
-                            identificador_cuenta=id_cuenta,
-                            alias=alias or f"CBU {cbu[-4:]}",
-                            cbu=cbu,
-                        ))
-                        cbu_estado = f"CBU guardado local (ePagos: {exc_ep})"
-            elif cbu and cbu not in ("", "nan", "none"):
-                cbu_estado = f"CBU/CVU inválido ({len(cbu)} dígitos)"
-
-            try:
-                db.commit()
-            except Exception as exc_db:
-                db.rollback()
+            if not nombre_completo or not cuit_raw:
                 resultados.append({
-                    "fila": fila, "nombre": apellido,
-                    "identificador": id_cliente, "estado": "error",
-                    "accion_cliente": accion_cliente, "cbu_estado": cbu_estado,
-                    "error": f"Error BD: {exc_db}",
+                    "fila": fila, "nombre": nombre_completo,
+                    "identificador": "", "estado": "error",
+                    "accion_cliente": "", "cbu_estado": "",
+                    "error": "NOMBRE y CUIT/CUIL son obligatorios",
                 })
                 continue
 
+            cuit_digits = _normalizar_cuit(cuit_raw)
+            if len(cuit_digits) not in (10, 11):
+                resultados.append({
+                    "fila": fila, "nombre": nombre_completo,
+                    "identificador": "", "estado": "error",
+                    "accion_cliente": "", "cbu_estado": "",
+                    "error": f"CUIT/CUIL inválido: '{cuit_raw}'",
+                })
+                continue
+
+            if len(cuit_digits) == 10:
+                cuit_digits = cuit_digits.zfill(11)
+
+            cuit       = int(cuit_digits)
+            dni        = _dni_desde_cuit(cuit_digits)
+            nombre     = ""
+            apellido   = nombre_completo
+            email      = ""
+            id_cliente = f"CLI-{cuit_digits}"
+
+        else:
+            nombre     = str(row.get("nombre",   "")).strip()
+            apellido   = str(row.get("apellido", "")).strip()
+            email      = str(row.get("email",    "")).strip()
+            dni_raw    = str(row.get("dni",      "")).strip().rstrip(".0")
+            cuit_raw   = str(row.get("cuit",     "")).strip().rstrip(".0")
+            id_cliente = str(row.get("identificador_cliente", "")).strip()
+            cbu        = str(row.get("cbu",   "")).strip().replace(" ", "").rstrip(".0")
+            alias      = str(row.get("alias", "")).strip()
+
+            if not any([nombre, apellido, email, dni_raw, cuit_raw]):
+                continue
+
+            if not all([nombre, apellido, email, dni_raw, cuit_raw]):
+                resultados.append({
+                    "fila": fila, "nombre": f"{apellido}, {nombre}",
+                    "identificador": id_cliente, "estado": "error",
+                    "accion_cliente": "", "cbu_estado": "",
+                    "error": "Campos obligatorios vacíos (nombre, apellido, email, dni, cuit)",
+                })
+                continue
+
+            try:
+                dni  = int(float(dni_raw))
+                cuit = int(float(cuit_raw))
+            except ValueError:
+                resultados.append({
+                    "fila": fila, "nombre": f"{apellido}, {nombre}",
+                    "identificador": id_cliente, "estado": "error",
+                    "accion_cliente": "", "cbu_estado": "",
+                    "error": f"DNI '{dni_raw}' o CUIT '{cuit_raw}' no son números válidos",
+                })
+                continue
+
+            if len(id_cliente) < 6:
+                id_cliente = f"CLI-{dni}"
+
+        # ---- Crear o encontrar cliente (sesión corta) ----
+        accion_cliente = ""
+        cliente_id_db  = None
+        id_cliente_ep  = id_cliente
+        try:
+            with get_session() as db:
+                existente = db.query(Cliente).filter(
+                    Cliente.identificador_cliente == id_cliente
+                ).first()
+                if existente:
+                    cliente_id_db  = existente.id
+                    id_cliente_ep  = existente.identificador_cliente
+                    accion_cliente = "ya existía"
+                else:
+                    por_cuit = db.query(Cliente).filter(Cliente.cuit == cuit).first()
+                    if por_cuit:
+                        cliente_id_db  = por_cuit.id
+                        id_cliente_ep  = por_cuit.identificador_cliente
+                        accion_cliente = "ya existía (mismo CUIT)"
+                    else:
+                        nuevo = Cliente(
+                            identificador_cliente=id_cliente,
+                            nombre=nombre, apellido=apellido,
+                            email=email, dni=dni, cuit=cuit,
+                        )
+                        db.add(nuevo)
+                        db.commit()
+                        db.refresh(nuevo)
+                        cliente_id_db  = nuevo.id
+                        accion_cliente = "creado"
+        except Exception as exc_db:
             resultados.append({
-                "fila": fila,
-                "nombre": apellido,
-                "identificador": id_cliente,
-                "estado": "ok",
-                "accion_cliente": accion_cliente,
-                "cbu_estado": cbu_estado,
-                "error": None,
+                "fila": fila, "nombre": apellido,
+                "identificador": id_cliente, "estado": "error",
+                "accion_cliente": "", "cbu_estado": "",
+                "error": f"Error BD al guardar cliente: {exc_db}",
             })
+            continue
+
+        # ---- Registrar CBU (llamada ePagos FUERA de la sesión DB) ----
+        cbu_estado = ""
+        if cbu and len(cbu) == 22 and cbu.isdigit():
+            # Verificar si ya existe (sesión corta de lectura)
+            with get_session() as db:
+                existe_cbu = db.query(Cuenta).filter(Cuenta.cbu == cbu).first()
+                cbu_ya_existe = existe_cbu is not None
+
+            if cbu_ya_existe:
+                cbu_estado = "CBU ya registrado"
+            else:
+                # Llamar ePagos FUERA de cualquier sesión DB
+                id_cuenta = f"CBU-{cbu}"
+                if ep:
+                    try:
+                        res_cbu   = ep.registrar_cuenta_cliente(
+                            identificador_cliente=id_cliente_ep,
+                            cbu=cbu,
+                            cuit=cuit,
+                        )
+                        id_cuenta = res_cbu.get("identificador_cuenta") or id_cuenta
+                        cbu_estado = "CBU registrado"
+                    except (EpagosError, Exception) as exc_ep:
+                        cbu_estado = f"CBU guardado local (ePagos: {exc_ep})"
+                else:
+                    cbu_estado = "CBU guardado local"
+
+                # Guardar CBU en DB (sesión corta)
+                try:
+                    with get_session() as db:
+                        db.add(Cuenta(
+                            cliente_id=cliente_id_db,
+                            identificador_cuenta=id_cuenta,
+                            alias=alias or f"CBU {cbu[-4:]}",
+                            cbu=cbu,
+                        ))
+                        db.commit()
+                except Exception as exc_db2:
+                    cbu_estado = f"Error al guardar CBU: {exc_db2}"
+        elif cbu and cbu not in ("", "nan", "none"):
+            cbu_estado = f"CBU/CVU inválido ({len(cbu)} dígitos)"
+
+        resultados.append({
+            "fila": fila,
+            "nombre": apellido,
+            "identificador": id_cliente,
+            "estado": "ok",
+            "accion_cliente": accion_cliente,
+            "cbu_estado": cbu_estado,
+            "error": None,
+        })
 
     total    = len(resultados)
     ok_count = sum(1 for r in resultados if r["estado"] == "ok")
