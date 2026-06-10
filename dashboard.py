@@ -924,7 +924,10 @@ def api_re_registrar_pendientes(request: Request):
         )
         pendientes = [c for c in cuentas if not _es_uuid_epagos(c.identificador_cuenta or "")]
 
-    for cuenta in pendientes:
+    total = len(pendientes)
+    print(f"[re_registrar] Iniciando re-registro de {total} CBU pendientes", flush=True)
+
+    for idx, cuenta in enumerate(pendientes, 1):
         if not cuenta.cbu:
             saltados += 1
             continue
@@ -936,6 +939,7 @@ def api_re_registrar_pendientes(request: Request):
                 continue
             id_cliente_ep = cliente.identificador_cliente
             cuit = cliente.cuit
+            nombre_log = f"{cliente.apellido}"
 
         # Llamar ePagos FUERA de sesión DB
         try:
@@ -952,12 +956,18 @@ def api_re_registrar_pendientes(request: Request):
                         c.identificador_cuenta = nuevo_id
                         db.commit()
                 ok += 1
+                print(f"[re_registrar] {idx}/{total} OK {nombre_log} ({id_cliente_ep}) → {nuevo_id}", flush=True)
             else:
                 fallidos += 1
-                errores.append(f"Cuenta {cuenta.id} (CBU {cuenta.cbu}): sin UUID en respuesta")
+                msg = f"sin UUID en respuesta"
+                errores.append(f"Cuenta {cuenta.id} (CBU {cuenta.cbu}): {msg}")
+                print(f"[re_registrar] {idx}/{total} FALLO {nombre_log} ({id_cliente_ep}): {msg}", flush=True)
         except (EpagosError, Exception) as exc:
             fallidos += 1
             errores.append(f"Cuenta {cuenta.id} (CBU {cuenta.cbu}): {exc}")
+            print(f"[re_registrar] {idx}/{total} ERROR {nombre_log} ({id_cliente_ep}): {exc}", flush=True)
+
+    print(f"[re_registrar] FIN — total={total} ok={ok} fallidos={fallidos} saltados={saltados}", flush=True)
 
     return {
         "total_pendientes": len(pendientes),
@@ -1141,9 +1151,12 @@ async def api_cobros_masivo(request: Request):
     resultados = []
     exitosos = fallidos = 0
 
+    total_items = len(items)
+    print(f"[cobros_masivo] Iniciando lote de {total_items} cobros", flush=True)
+
     with get_session() as db:
         ep = _epagos()
-        for item in items:
+        for idx, item in enumerate(items, 1):
             cliente_id = item.get("cliente_id")
             cuenta_id  = item.get("cuenta_id")
             importe    = item.get("importe")
@@ -1221,6 +1234,7 @@ async def api_cobros_masivo(request: Request):
                                     "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
                                     "importe": float(importe), "estado": cobro.estado,
                                     "numero_operacion": numero_op, "error": None})
+                print(f"[cobros_masivo] {idx}/{total_items} OK {cliente.apellido} ({cliente.identificador_cliente}) ${importe} → {numero_op}", flush=True)
             except EpagosError as e:
                 cobro.estado = "error"
                 cobro.error  = str(e)
@@ -1229,6 +1243,7 @@ async def api_cobros_masivo(request: Request):
                                     "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
                                     "importe": float(importe), "estado": "error",
                                     "numero_operacion": numero_op, "error": str(e)})
+                print(f"[cobros_masivo] {idx}/{total_items} FALLO {cliente.apellido} ({cliente.identificador_cliente}): {e}", flush=True)
             except Exception as exc:
                 cobro.estado = "error"
                 cobro.error  = f"Error al conectar con ePagos: {exc}"
@@ -1237,8 +1252,10 @@ async def api_cobros_masivo(request: Request):
                                     "cliente_nombre": f"{cliente.apellido}, {cliente.nombre}",
                                     "importe": float(importe), "estado": "error",
                                     "numero_operacion": numero_op, "error": cobro.error})
+                print(f"[cobros_masivo] {idx}/{total_items} ERROR {cliente.apellido} ({cliente.identificador_cliente}): {exc}", flush=True)
         db.commit()
 
+    print(f"[cobros_masivo] FIN — total={total_items} exitosos={exitosos} fallidos={fallidos}", flush=True)
     return {"total": len(items), "exitosos": exitosos, "fallidos": fallidos, "resultados": resultados}
 
 
