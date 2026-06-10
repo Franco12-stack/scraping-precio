@@ -217,7 +217,7 @@ function masivosApp() {
             id_ep:        cl.identificador_cliente,
             id_cuenta:    ct.identificador_cuenta,
             alias:        ct.alias,
-            importe:      '',
+            importe:      this.config.importe || '',
             seleccionado: true,
             cuentas:      cl.cuentas,
           });
