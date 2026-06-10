@@ -299,7 +299,7 @@ def importar_clientes(
                 identificador_cliente=identificador,
                 nombre=nombre,
                 apellido=apellido,
-                email=None,
+                email="",
                 dni=dni,
                 cuit=cuit,
             )
