@@ -47,14 +47,23 @@
     </div>
   </div>
 
+  <!-- Resumen de estado -->
+  <div class="alert alert-info border-0 mb-3 d-flex gap-3 flex-wrap small">
+    <span><i class="bi bi-check-circle-fill text-success me-1"></i><strong x-text="cantOk"></strong> listos para cobrar (con UUID ePagos)</span>
+    <span><i class="bi bi-exclamation-triangle-fill text-warning me-1"></i><strong x-text="cantSinUuid"></strong> sin UUID (van a fallar)</span>
+  </div>
+
   <!-- Barra de acciones + resumen -->
   <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <div class="d-flex gap-2 align-items-center flex-wrap">
+      <button class="btn btn-outline-success btn-sm" @click="seleccionarSoloOk()">
+        <i class="bi bi-check-circle me-1"></i>Solo los listos (<span x-text="cantOk"></span>)
+      </button>
       <button class="btn btn-outline-secondary btn-sm" @click="seleccionarTodos()">
-        <i class="bi bi-check-all me-1"></i>Seleccionar todos con CBU
+        <i class="bi bi-check-all me-1"></i>Todos
       </button>
       <button class="btn btn-outline-secondary btn-sm" @click="deseleccionarTodos()">
-        <i class="bi bi-x-lg me-1"></i>Deseleccionar todos
+        <i class="bi bi-x-lg me-1"></i>Ninguno
       </button>
       <span class="text-muted small">
         <span class="fw-bold text-dark" x-text="seleccionados.length"></span> seleccionado(s) ·
@@ -157,6 +166,16 @@
               <td class="small">
                 <span class="font-monospace" x-text="row.cbu || row.id_cuenta"></span>
                 <span class="text-muted ms-1" x-text="row.alias ? '(' + row.alias + ')' : ''"></span>
+                <template x-if="row.epagos_ok">
+                  <span class="badge bg-success ms-1" title="Registrado en ePagos — listo para cobrar">
+                    <i class="bi bi-check2"></i> ePagos
+                  </span>
+                </template>
+                <template x-if="!row.epagos_ok">
+                  <span class="badge bg-warning text-dark ms-1" title="No registrado en ePagos — el cobro va a fallar">
+                    <i class="bi bi-exclamation-triangle"></i> sin UUID
+                  </span>
+                </template>
               </td>
               <td style="width:180px">
                 <div class="input-group input-group-sm">
@@ -209,6 +228,8 @@ function masivosApp() {
         if (cl.cuentas.length > 0) {
           // Usar la primera cuenta por defecto
           const ct = cl.cuentas[0];
+          const _id = ct.identificador_cuenta || '';
+          const _epagos_ok = _id.includes('-') && _id.length > 30;
           this.conCBU.push({
             cliente_id:   cl.id,
             cuenta_id:    ct.id,
@@ -218,8 +239,9 @@ function masivosApp() {
             id_cuenta:    ct.identificador_cuenta,
             cbu:          ct.cbu || '',
             alias:        ct.alias,
+            epagos_ok:    _epagos_ok,
             importe:      this.config.importe || '',
-            seleccionado: true,
+            seleccionado: _epagos_ok,   // solo selecciona los que están listos
             cuentas:      cl.cuentas,
           });
         } else {
@@ -236,8 +258,17 @@ function masivosApp() {
       return this.seleccionados.reduce((a, r) => a + (parseFloat(r.importe) || 0), 0);
     },
 
-    seleccionarTodos()   { this.conCBU.forEach(r => r.seleccionado = true);  },
-    deseleccionarTodos() { this.conCBU.forEach(r => r.seleccionado = false); },
+    get cantOk() {
+      return this.conCBU.filter(r => r.epagos_ok).length;
+    },
+
+    get cantSinUuid() {
+      return this.conCBU.filter(r => !r.epagos_ok).length;
+    },
+
+    seleccionarTodos()    { this.conCBU.forEach(r => r.seleccionado = true);  },
+    deseleccionarTodos()  { this.conCBU.forEach(r => r.seleccionado = false); },
+    seleccionarSoloOk()   { this.conCBU.forEach(r => r.seleccionado = r.epagos_ok); },
 
     aplicarImporteGlobal() {
       if (this.config.importe) {
