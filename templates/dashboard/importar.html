@@ -17,14 +17,24 @@
   <!-- Instrucciones -->
   <div class="alert alert-info border-0 mb-4" role="alert">
     <div class="fw-semibold mb-1"><i class="bi bi-info-circle me-1"></i>Columnas esperadas</div>
+    <div class="small font-monospace mb-1">
+      <strong>Formato ePagos (recomendado):</strong><br>
+      <span class="text-success">TITULAR (o NOMBRE)</span> ·
+      <span class="text-success">CUIT/CUIL (o CUIT)</span> ·
+      <span class="text-success">CVU/CBU (o CBU)</span> ·
+      BANCO <em class="text-muted">(opcional)</em>
+    </div>
     <div class="small font-monospace">
-      <strong>Obligatorias:</strong> nombre · apellido · email · dni · cuit<br>
-      <strong>Opcionales:</strong> identificador_cliente · cbu (22 dígitos) · alias
+      <strong>Formato completo:</strong><br>
+      nombre · apellido · email · dni · cuit ·
+      <em class="text-muted">identificador_cliente (opt)</em> ·
+      <em class="text-muted">cbu (opt)</em> ·
+      <em class="text-muted">alias (opt)</em>
     </div>
     <div class="small mt-1 text-muted">
-      Formatos soportados: <strong>.xlsx</strong> y <strong>.csv</strong> (separado por comas).<br>
-      Si <em>identificador_cliente</em> no viene, se genera automáticamente como <code>CLI-{dni}</code>.<br>
-      Si el cliente ya existe (mismo identificador o DNI), se omite la creación pero se agrega el CBU si es nuevo.
+      Formatos soportados: <strong>.xlsx</strong> y <strong>.csv</strong>.<br>
+      El identificador del cliente se genera automáticamente a partir del CUIT.<br>
+      Si el cliente ya existe (mismo CUIT), se omite la creación pero se agrega el CBU si es nuevo.
     </div>
   </div>
 

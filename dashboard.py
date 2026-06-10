@@ -1261,7 +1261,7 @@ def descargar_template(request: Request):
     if err:
         return err
     contenido = (
-        "NOMBRE,CUIT/CUIL,CVU/CBU,BANCO\n"
+        "TITULAR,CUIT/CUIL,CBU,BANCO\n"
         "GARCIA JUAN,20123456789,3220001101000040970011,Banco Nación\n"
         "LOPEZ MARIA,27234567890,0720461088000012345678,Banco Galicia\n"
     )
@@ -1309,7 +1309,27 @@ async def api_importar_clientes(
     df.columns = [str(c).strip().lower() for c in df.columns]
     cols = set(df.columns)
 
-    # Detectar formato: nuevo (NOMBRE / CUIT/CUIL / CVU/CBU / BANCO)
+    # Aliases para columnas: mapear variantes al nombre canónico
+    _alias = {
+        "titular":   "nombre",
+        "cuit/cuil": "cuit/cuil",  # ya canónico
+        "cuit":      "cuit/cuil",
+        "cuil":      "cuit/cuil",
+        "cvu/cbu":   "cvu/cbu",    # ya canónico
+        "cbu":       "cvu/cbu",
+        "cvu":       "cvu/cbu",
+        "banco":     "banco",
+        "nombre":    "nombre",
+        "apellido":  "apellido",
+        "email":     "email",
+        "dni":       "dni",
+    }
+    rename_map = {col: _alias[col] for col in df.columns if col in _alias and _alias[col] != col}
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    cols = set(df.columns)
+
+    # Detectar formato: nuevo (NOMBRE o TITULAR / CUIT o CUIT/CUIL / CBU o CVU/CBU / BANCO)
     #                   o viejo (nombre / apellido / email / dni / cuit / ...)
     formato_nuevo = "cuit/cuil" in cols or "cvu/cbu" in cols
 
