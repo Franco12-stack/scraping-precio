@@ -41,6 +41,12 @@
         <div class="mt-3 alert" :class="resultadoImportar.errores.length ? 'alert-warning' : 'alert-success'">
           <strong x-text="resultadoImportar.creados + ' clientes creados'"></strong>,
           <span x-text="resultadoImportar.omitidos + ' ya existían'"></span>
+          <span x-show="resultadoImportar.epagos_ok > 0">,
+            <span x-text="resultadoImportar.epagos_ok + ' CBU registrados en ePagos'"></span>
+          </span>
+          <span x-show="resultadoImportar.epagos_error > 0">,
+            <span class="text-danger fw-semibold" x-text="resultadoImportar.epagos_error + ' errores ePagos'"></span>
+          </span>
           <template x-if="resultadoImportar.errores.length">
             <ul class="mt-2 mb-0 small">
               <template x-for="e in resultadoImportar.errores" :key="e">

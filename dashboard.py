@@ -265,7 +265,11 @@ def importar_clientes(
 
     creados = 0
     omitidos = 0
+    epagos_ok = 0
+    epagos_error = 0
     errores = []
+
+    ep = _epagos()
 
     with get_session() as db:
         for i, fila in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
@@ -303,13 +307,25 @@ def importar_clientes(
             db.flush()
 
             if cbu:
-                cuenta = Cuenta(
+                id_cuenta = cbu
+                try:
+                    res = ep.registrar_cuenta_cliente(
+                        identificador_cliente=identificador,
+                        cbu=cbu,
+                        cuit=cuit,
+                    )
+                    id_cuenta = res.get("identificador_cuenta") or cbu
+                    epagos_ok += 1
+                except Exception as e:
+                    epagos_error += 1
+                    errores.append(f"Fila {i} ({titular}): ePagos — {e}")
+
+                db.add(Cuenta(
                     cliente_id=cliente.id,
-                    identificador_cuenta=cbu,
+                    identificador_cuenta=id_cuenta,
                     alias=str(banco).strip() if banco else None,
                     cbu=cbu,
-                )
-                db.add(cuenta)
+                ))
 
             creados += 1
 
@@ -318,6 +334,8 @@ def importar_clientes(
     return JSONResponse({
         "creados": creados,
         "omitidos": omitidos,
+        "epagos_ok": epagos_ok,
+        "epagos_error": epagos_error,
         "errores": errores,
     })
 
