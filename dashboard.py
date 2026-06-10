@@ -1084,8 +1084,14 @@ async def api_cobros_masivo(request: Request):
                 fallidos += 1
                 continue
 
-            # Si identificador_cuenta es el CBU crudo (22 dígitos), registrar en ePagos primero
-            if cuenta.cbu and cuenta.identificador_cuenta == cuenta.cbu:
+            # Si el CBU no está registrado en ePagos (sin UUID), intentar registrar ahora
+            _id = cuenta.identificador_cuenta or ""
+            _necesita_registro = cuenta.cbu and (
+                _id == cuenta.cbu                        # CBU crudo exacto
+                or _id.startswith("CBU-")               # fallback con prefijo CBU-
+                or (len(_id) == 22 and _id.isdigit())   # CBU de 22 dígitos sin prefijo
+            )
+            if _necesita_registro:
                 try:
                     res_reg = ep.registrar_cuenta_cliente(
                         identificador_cliente=cliente.identificador_cliente,
