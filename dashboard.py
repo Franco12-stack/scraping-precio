@@ -887,6 +887,87 @@ def api_eliminar_cuenta(request: Request, cuenta_id: int):
     return {"ok": True}
 
 
+def _es_uuid_epagos(identificador: str) -> bool:
+    """True si el identificador parece un UUID asignado por ePagos (contiene guiones)."""
+    return "-" in identificador and len(identificador) > 30
+
+
+@router.get("/api/cuentas/pendientes_epagos")
+def api_cuentas_pendientes(request: Request):
+    """Cuenta cuántos CBU no tienen UUID de ePagos todavía."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+    with get_session() as db:
+        cuentas = db.query(Cuenta).all()
+        pendientes = [c for c in cuentas if not _es_uuid_epagos(c.identificador_cuenta or "")]
+        return {"total": len(pendientes), "pendientes": len(pendientes)}
+
+
+@router.post("/api/cuentas/re_registrar_pendientes")
+def api_re_registrar_pendientes(request: Request):
+    """Re-intenta registrar en ePagos todos los CBU que no tienen UUID."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    ep = _epagos()
+    ok = fallidos = saltados = 0
+    errores = []
+
+    with get_session() as db:
+        cuentas = (
+            db.query(Cuenta)
+            .join(Cliente)
+            .filter(Cuenta.cbu.isnot(None))
+            .all()
+        )
+        pendientes = [c for c in cuentas if not _es_uuid_epagos(c.identificador_cuenta or "")]
+
+    for cuenta in pendientes:
+        if not cuenta.cbu:
+            saltados += 1
+            continue
+        # Cargar cliente en sesión corta
+        with get_session() as db:
+            cliente = db.get(Cliente, cuenta.cliente_id)
+            if not cliente:
+                saltados += 1
+                continue
+            id_cliente_ep = cliente.identificador_cliente
+            cuit = cliente.cuit
+
+        # Llamar ePagos FUERA de sesión DB
+        try:
+            res = ep.registrar_cuenta_cliente(
+                identificador_cliente=id_cliente_ep,
+                cbu=cuenta.cbu,
+                cuit=cuit,
+            )
+            nuevo_id = res.get("identificador_cuenta")
+            if nuevo_id and _es_uuid_epagos(nuevo_id):
+                with get_session() as db:
+                    c = db.get(Cuenta, cuenta.id)
+                    if c:
+                        c.identificador_cuenta = nuevo_id
+                        db.commit()
+                ok += 1
+            else:
+                fallidos += 1
+                errores.append(f"Cuenta {cuenta.id} (CBU {cuenta.cbu}): sin UUID en respuesta")
+        except (EpagosError, Exception) as exc:
+            fallidos += 1
+            errores.append(f"Cuenta {cuenta.id} (CBU {cuenta.cbu}): {exc}")
+
+    return {
+        "total_pendientes": len(pendientes),
+        "ok": ok,
+        "fallidos": fallidos,
+        "saltados": saltados,
+        "errores": errores[:20],  # Máx 20 errores para no sobrecargar la respuesta
+    }
+
+
 @router.get("/api/cobros")
 def api_listar_cobros(request: Request, estado: Optional[str] = None):
     err = _api_require_auth(request)
