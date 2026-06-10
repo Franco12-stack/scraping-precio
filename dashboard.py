@@ -173,6 +173,7 @@ def dashboard_home(request: Request):
             "total_cobros":   total_cobros,
             "monto_total":    monto_total,
             "ultimos_cobros": ultimos_cobros,
+            "entorno":        os.getenv("EPAGOS_ENTORNO", "sandbox"),
         })
 
 

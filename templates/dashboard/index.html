@@ -7,7 +7,11 @@
   <div class="d-flex justify-content-between align-items-center mb-4">
     <h4 class="fw-bold mb-0">Panel principal</h4>
     <div class="d-flex align-items-center gap-2">
-      <span class="text-muted small">Sandbox activo</span>
+      {% if entorno == 'produccion' %}
+        <span class="badge bg-success">Producción activa</span>
+      {% else %}
+        <span class="badge bg-warning text-dark">Sandbox activo</span>
+      {% endif %}
       <button class="btn btn-sm btn-outline-secondary" @click="cargar()" :disabled="cargando">
         <i class="bi bi-arrow-repeat me-1" :class="{'spin': cargando}"></i>Actualizar
       </button>
