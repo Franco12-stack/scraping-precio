@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request, Form, Depends, UploadFile, File, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer, BadSignature
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, or_
 from sqlalchemy.orm import Session
 
 from db import Cliente, Cuenta, Cobro, Usuario, get_session, init_db
@@ -980,34 +980,57 @@ def api_re_registrar_pendientes(request: Request):
 
 
 @router.get("/api/cobros")
-def api_listar_cobros(request: Request, estado: Optional[str] = None):
+def api_listar_cobros(
+    request: Request,
+    estado:    Optional[str] = None,
+    busqueda:  Optional[str] = None,
+    page:      int = 1,
+    per_page:  int = 100,
+):
     err = _api_require_auth(request)
     if err:
         return err
+    page     = max(1, page)
+    per_page = max(1, min(500, per_page))
     with get_session() as db:
-        q = db.query(Cobro).join(Cliente).order_by(Cobro.creado_en.desc()).limit(200)
+        q = db.query(Cobro).join(Cliente)
         if estado:
-            q = db.query(Cobro).join(Cliente).filter(
-                Cobro.estado == estado
-            ).order_by(Cobro.creado_en.desc()).limit(200)
-        cobros = q.all()
-        return [
-            {
-                "id":               co.id,
-                "cliente_id":       co.cliente_id,
-                "cliente_nombre":   f"{co.cliente.apellido}, {co.cliente.nombre}",
-                "numero_operacion": co.numero_operacion,
-                "importe":          co.importe,
-                "descripcion":      co.descripcion,
-                "tipo":             co.tipo,
-                "fecha_cobro":      co.fecha_cobro.isoformat() if co.fecha_cobro else None,
-                "estado":           co.estado,
-                "id_transaccion":   co.id_transaccion or "",
-                "error":            co.error or "",
-                "creado_en":        co.creado_en.isoformat(),
-            }
-            for co in cobros
-        ]
+            q = q.filter(Cobro.estado == estado)
+        if busqueda:
+            b = f"%{busqueda}%"
+            q = q.filter(or_(
+                Cliente.nombre.ilike(b),
+                Cliente.apellido.ilike(b),
+                Cobro.numero_operacion.ilike(b),
+                Cobro.id_transaccion.ilike(b),
+            ))
+        total  = q.count()
+        pages  = max(1, (total + per_page - 1) // per_page)
+        page   = min(page, pages)
+        cobros = q.order_by(Cobro.creado_en.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        return {
+            "cobros": [
+                {
+                    "id":               co.id,
+                    "cliente_id":       co.cliente_id,
+                    "cliente_nombre":   f"{co.cliente.apellido}, {co.cliente.nombre}",
+                    "numero_operacion": co.numero_operacion,
+                    "importe":          co.importe,
+                    "descripcion":      co.descripcion,
+                    "tipo":             co.tipo,
+                    "fecha_cobro":      co.fecha_cobro.isoformat() if co.fecha_cobro else None,
+                    "estado":           co.estado,
+                    "id_transaccion":   co.id_transaccion or "",
+                    "error":            co.error or "",
+                    "creado_en":        co.creado_en.isoformat(),
+                }
+                for co in cobros
+            ],
+            "total":    total,
+            "page":     page,
+            "per_page": per_page,
+            "pages":    pages,
+        }
 
 
 @router.post("/api/cobros")
