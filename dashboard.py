@@ -1163,11 +1163,12 @@ async def api_cobros_masivo(request: Request):
     if err:
         return err
 
-    data        = await request.json()
-    descripcion = data.get("descripcion", "fundcolab")
-    tipo        = data.get("tipo", "inmediato")
-    fecha_cobro = data.get("fecha_cobro")
-    items       = data.get("cobros", [])
+    data         = await request.json()
+    descripcion  = data.get("descripcion", "fundcolab")
+    tipo         = data.get("tipo", "inmediato")
+    fecha_cobro  = data.get("fecha_cobro")
+    fecha_debito = data.get("fecha_debito")   # fecha de intento de débito para tipo inmediato
+    items        = data.get("cobros", [])
 
     if not items:
         return JSONResponse({"error": "No hay cobros para procesar"}, status_code=422)
@@ -1292,7 +1293,8 @@ async def api_cobros_masivo(request: Request):
                         importe=float(importe), numero_operacion=numero_op,
                         nombre_pagador=nombre, apellido_pagador=apellido,
                         email_pagador=email, dni_pagador=dni,
-                        cuit_pagador=cuit, descripcion=descripcion)
+                        cuit_pagador=cuit, descripcion=descripcion,
+                        fecha_debito=date.fromisoformat(fecha_debito) if fecha_debito else None)
                     id_transaccion = str(res.get("id_transaccion", ""))
                     estado_cobro = "pendiente"
                 exitosos += 1

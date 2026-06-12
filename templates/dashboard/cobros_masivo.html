@@ -41,18 +41,27 @@
           </div>
           <div class="form-text">Se aplica a todos los seleccionados. Podés editarlo por cliente.</div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
           <label class="form-label small fw-semibold">Tipo</label>
           <select x-model="config.tipo" class="form-select">
-            <option value="inmediato">Inmediato (72 hs hábiles)</option>
-            <option value="programado">Programado (fecha futura)</option>
+            <option value="inmediato">Inmediato</option>
+            <option value="programado">Programado</option>
           </select>
         </div>
-        <div class="col-md-3" x-show="config.tipo === 'programado'" x-transition>
-          <label class="form-label small fw-semibold">Fecha de cobro</label>
-          <input x-model="config.fecha_cobro" type="date" class="form-control" :min="hoy">
+        <div class="col-md-2">
+          <label class="form-label small fw-semibold">Fecha de débito</label>
+          <input x-model="config.fecha_debito" type="date" class="form-control"
+                 :min="manana"
+                 x-show="config.tipo === 'inmediato'"
+                 :title="'Fecha en que ePagos intentará el débito. Mínimo mañana (' + manana + ')'">
+          <input x-model="config.fecha_cobro" type="date" class="form-control"
+                 :min="hoy"
+                 x-show="config.tipo === 'programado'">
+          <div class="form-text" x-show="config.tipo === 'inmediato'">
+            Dejá vacío para mañana por defecto.
+          </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
           <label class="form-label small fw-semibold">Descripción</label>
           <input x-model="config.descripcion" class="form-control" placeholder="Cuota mayo 2026">
         </div>
@@ -246,8 +255,9 @@ function masivosApp() {
   const clientes = {{ clientes | tojson }};
 
   return {
-    hoy: new Date().toISOString().split('T')[0],
-    config: { importe: '1900', tipo: 'inmediato', fecha_cobro: '', descripcion: 'fundcolab' },
+    hoy:    new Date().toISOString().split('T')[0],
+    manana: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+    config: { importe: '1900', tipo: 'inmediato', fecha_cobro: '', fecha_debito: '', descripcion: 'fundcolab' },
     conCBU: [],
     sinCBU: [],
     ejecutando: false,
@@ -364,6 +374,7 @@ function masivosApp() {
           descripcion:  this.config.descripcion || 'Cobro recurrente',
           tipo:         this.config.tipo,
           fecha_cobro:  this.config.tipo === 'programado' ? this.config.fecha_cobro : null,
+          fecha_debito: this.config.tipo === 'inmediato' && this.config.fecha_debito ? this.config.fecha_debito : null,
           cobros: sel.map(r => ({
             cliente_id: r.cliente_id,
             cuenta_id:  r.cuenta_id,

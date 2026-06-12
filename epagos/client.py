@@ -434,7 +434,7 @@ class EpagosClient:
         )
 
         from datetime import timedelta
-        fec_debito = fecha_debito or (date.today() + timedelta(days=7))
+        fec_debito = fecha_debito or (date.today() + timedelta(days=1))
 
         def _llamar():
             return self._v2().service.solicitud_pago_recurrente(
