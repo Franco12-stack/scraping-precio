@@ -1344,6 +1344,83 @@ def api_cobros_pendientes_reintento(request: Request):
         return {"pendientes": total}
 
 
+@router.post("/api/cobros/sincronizar_estados")
+def api_sincronizar_estados(request: Request):
+    """Consulta ePagos por pagos acreditados y actualiza el estado en la BD."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    # Rango: desde el cobro más antiguo pendiente hasta hoy
+    with get_session() as db:
+        cobros_pend = (
+            db.query(Cobro.id, Cobro.id_transaccion, Cobro.numero_operacion, Cobro.creado_en)
+            .filter(Cobro.estado == "pendiente")
+            .all()
+        )
+        if not cobros_pend:
+            return {"actualizados": 0, "mensaje": "No hay cobros pendientes para sincronizar"}
+
+        fecha_min = min(c.creado_en.date() for c in cobros_pend)
+        # Índices por id_transaccion y numero_operacion
+        por_trans = {str(c.id_transaccion): c.id for c in cobros_pend if c.id_transaccion}
+        por_op    = {c.numero_operacion:    c.id for c in cobros_pend if c.numero_operacion}
+
+    ep = _epagos()
+    pagos_epagos: list[dict] = []
+    try:
+        pagina = 1
+        while True:
+            lote = ep.obtener_pagos(fecha_min, date.today(), estado="A", pagina=pagina)
+            if not lote:
+                break
+            pagos_epagos.extend(lote)
+            if len(lote) < 100:
+                break
+            pagina += 1
+    except EpagosError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"error": f"Error al consultar ePagos: {exc}"}, status_code=500)
+
+    # Loguear estructura del primer registro para depuración
+    if pagos_epagos:
+        print(f"[sync_estados] Campos de ePagos: {list(pagos_epagos[0].keys())}", flush=True)
+
+    actualizados = 0
+    for pago in pagos_epagos:
+        # ePagos puede devolver distintos nombres de campo según la versión
+        id_trans = str(
+            pago.get("id_transaccion") or pago.get("IdTransaccion") or
+            pago.get("id_trans") or ""
+        ).strip()
+        num_op = str(
+            pago.get("numero_operacion") or pago.get("NumeroOperacion") or
+            pago.get("numero_op") or ""
+        ).strip()
+
+        cobro_id = por_trans.get(id_trans) or por_op.get(num_op)
+        if not cobro_id:
+            continue
+
+        try:
+            with get_session() as db:
+                c = db.get(Cobro, cobro_id)
+                if c and c.estado == "pendiente":
+                    c.estado = "acreditado"
+                    db.commit()
+                    actualizados += 1
+        except Exception as exc_db:
+            print(f"[sync_estados] error guardando {cobro_id}: {exc_db}", flush=True)
+
+    print(f"[sync_estados] FIN — epagos={len(pagos_epagos)} actualizados={actualizados}", flush=True)
+    return {
+        "actualizados":  actualizados,
+        "total_epagos":  len(pagos_epagos),
+        "cobros_pend":   len(cobros_pend),
+    }
+
+
 @router.post("/api/cobros/reintentar_fallidos")
 def api_reintentar_cobros_fallidos(request: Request):
     """Reintenta todos los cobros que quedaron en estado 'error'."""

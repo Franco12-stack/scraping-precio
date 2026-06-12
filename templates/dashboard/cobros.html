@@ -6,9 +6,15 @@
 
   <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
     <h4 class="fw-bold mb-0"><i class="bi bi-receipt me-2"></i>Historial de cobros</h4>
-    <button class="btn btn-sm btn-outline-secondary" @click="cargar(1)" :disabled="cargando">
-      <i class="bi bi-arrow-repeat me-1" :class="{'spin': cargando}"></i>Actualizar
-    </button>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-success" @click="sincronizar()" :disabled="sincronizando">
+        <span x-show="!sincronizando"><i class="bi bi-cloud-download me-1"></i>Sincronizar estados con ePagos</span>
+        <span x-show="sincronizando"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ePagos…</span>
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" @click="cargar(1)" :disabled="cargando">
+        <i class="bi bi-arrow-repeat me-1" :class="{'spin': cargando}"></i>Actualizar
+      </button>
+    </div>
   </div>
 
   <!-- Filtros -->
@@ -164,6 +170,7 @@ function cobrosApp() {
     porPagina: 100,
     irAPagina: 1,
     cargando: false,
+    sincronizando: false,
     errorMsg: null,
     busqueda: '',
     filtroEstado: '',
@@ -180,6 +187,25 @@ function cobrosApp() {
     setEstado(e) {
       this.filtroEstado = e;
       this.cargar(1);
+    },
+
+    async sincronizar() {
+      this.sincronizando = true;
+      try {
+        const res  = await fetch('/api/cobros/sincronizar_estados', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Error al sincronizar', 'error'); return; }
+        if (data.actualizados > 0) {
+          showToast(`✅ ${data.actualizados} cobro(s) actualizados a "acreditado"`);
+          await this.cargar(this.pagina);
+        } else {
+          showToast(`ePagos no reportó acreditaciones nuevas (consultó ${data.total_epagos} pagos)`);
+        }
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      } finally {
+        this.sincronizando = false;
+      }
     },
 
     async cargar(p) {
