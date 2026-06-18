@@ -364,10 +364,14 @@ class EpagosClient:
             cbu_pagador            = xsd.SkipValue,
         )
 
+        # identificador_externo_2 lleva el CUIT del donante: ePagos lo usa para
+        # identificar la operación y al donante cuando reciben reclamos directos.
+        cuit_str = str(cuit_pagador) if cuit_pagador else xsd.SkipValue
+
         # Solo los campos del XML de referencia de ePagos
         return DatosOperacion(
             numero_operacion         = numero_operacion,
-            identificador_externo_2  = xsd.SkipValue,
+            identificador_externo_2  = cuit_str,
             identificador_externo_3  = xsd.SkipValue,
             identificador_externo_4  = xsd.SkipValue,
             url_boleta               = xsd.SkipValue,
