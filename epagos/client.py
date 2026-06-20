@@ -259,6 +259,37 @@ class EpagosClient:
                 tarjetas.append(self._to_dict(tarjeta))
         return tarjetas
 
+    def obtener_resultados_debito(self, ids_transaccion: list[int]) -> list[dict]:
+        """
+        Consulta si el banco aceptó o rechazó el intento de débito para una lista
+        de id_transaccion. A diferencia de obtener_pagos, no espera a que se
+        complete la acreditación (72 hs hábiles) — informa el resultado del
+        intento en sí.
+        """
+        ids = [int(i) for i in ids_transaccion if i]
+        if not ids:
+            return []
+        ArrayDatosDebito = self._tipo_v2("ArrayDatosDebito")
+
+        def _llamar():
+            return self._v2().service.obtener_resultados_debito(
+                API_VERSION_V2,
+                {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
+                ArrayDatosDebito(ids),
+            )
+
+        resp = _llamar()
+        try:
+            self._validar(resp.id_resp, resp.respuesta)
+        except EpagosError as e:
+            if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
+                self._token_v2 = None
+                resp = _llamar()
+                self._validar(resp.id_resp, resp.respuesta)
+            else:
+                raise
+        return [self._to_dict(r) for r in (resp.resultados or [])]
+
     # ------------------------------------------------------------------
     # Recurrencia — cobros por débito directo
     # ------------------------------------------------------------------

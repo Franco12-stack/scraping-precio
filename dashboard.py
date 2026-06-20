@@ -1423,6 +1423,58 @@ def api_sincronizar_estados(request: Request):
     }
 
 
+@router.post("/api/cobros/verificar_debito")
+def api_verificar_debito(request: Request):
+    """Consulta a ePagos si el banco aceptó o rechazó el intento de débito
+    de los cobros pendientes (sin esperar la acreditación completa)."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    with get_session() as db:
+        cobros_pend = (
+            db.query(Cobro.id, Cobro.id_transaccion, Cobro.numero_operacion)
+            .join(Cliente)
+            .filter(Cobro.estado == "pendiente", Cobro.id_transaccion.isnot(None))
+            .add_columns(Cliente.nombre, Cliente.apellido)
+            .all()
+        )
+        por_id_trans = {
+            str(c.id_transaccion): {
+                "cobro_id": c.id,
+                "numero_operacion": c.numero_operacion,
+                "cliente": f"{c.nombre} {c.apellido}",
+            }
+            for c in cobros_pend if str(c.id_transaccion).isdigit()
+        }
+
+    if not por_id_trans:
+        return {"resultados": [], "mensaje": "No hay cobros pendientes con id_transaccion numérico para consultar"}
+
+    ep = _epagos()
+    try:
+        resultados_epagos = ep.obtener_resultados_debito([int(i) for i in por_id_trans])
+    except EpagosError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"error": f"Error al consultar ePagos: {exc}"}, status_code=500)
+
+    resultados = []
+    for r in resultados_epagos:
+        op = str(r.get("operacion") or "")
+        info = por_id_trans.get(op)
+        if not info:
+            continue
+        resultados.append({
+            "cliente":          info["cliente"],
+            "numero_operacion": info["numero_operacion"],
+            "codigo":           r.get("codigo"),
+            "resultado":        r.get("resultado"),
+        })
+
+    return {"resultados": resultados, "consultados": len(por_id_trans)}
+
+
 @router.post("/api/cobros/reintentar_fallidos")
 def api_reintentar_cobros_fallidos(request: Request):
     """Reintenta todos los cobros que quedaron en estado 'error'."""

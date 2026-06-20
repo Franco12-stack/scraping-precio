@@ -11,6 +11,10 @@
         <span x-show="!sincronizando"><i class="bi bi-cloud-download me-1"></i>Sincronizar estados con ePagos</span>
         <span x-show="sincronizando"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ePagos…</span>
       </button>
+      <button class="btn btn-sm btn-outline-primary" @click="verificarDebito()" :disabled="verificandoDebito">
+        <span x-show="!verificandoDebito"><i class="bi bi-bank me-1"></i>Verificar intento de débito</span>
+        <span x-show="verificandoDebito"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ePagos…</span>
+      </button>
       <button class="btn btn-sm btn-outline-secondary" @click="cargar(1)" :disabled="cargando">
         <i class="bi bi-arrow-repeat me-1" :class="{'spin': cargando}"></i>Actualizar
       </button>
@@ -152,6 +156,40 @@
     </div>
   </div>
 
+  <!-- Modal resultado intento de débito -->
+  <div class="modal fade" id="modalDebito" tabindex="-1" x-ref="modalDebito">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-bank me-2"></i>Resultado del intento de débito</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small" x-show="resultadosDebito.length === 0">
+            ePagos no devolvió resultados para los cobros pendientes consultados.
+          </p>
+          <div class="table-responsive" x-show="resultadosDebito.length > 0">
+            <table class="table table-sm">
+              <thead>
+                <tr><th>Cliente</th><th>N° Operación</th><th>Código</th><th>Resultado</th></tr>
+              </thead>
+              <tbody>
+                <template x-for="r in resultadosDebito" :key="r.numero_operacion">
+                  <tr>
+                    <td x-text="r.cliente"></td>
+                    <td class="font-monospace small" x-text="r.numero_operacion"></td>
+                    <td class="font-monospace small" x-text="r.codigo"></td>
+                    <td x-text="r.resultado"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
 
@@ -171,6 +209,8 @@ function cobrosApp() {
     irAPagina: 1,
     cargando: false,
     sincronizando: false,
+    verificandoDebito: false,
+    resultadosDebito: [],
     errorMsg: null,
     busqueda: '',
     filtroEstado: '',
@@ -205,6 +245,25 @@ function cobrosApp() {
         showToast('Error: ' + e.message, 'error');
       } finally {
         this.sincronizando = false;
+      }
+    },
+
+    async verificarDebito() {
+      this.verificandoDebito = true;
+      try {
+        const res  = await fetch('/api/cobros/verificar_debito', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Error al verificar débito', 'error'); return; }
+        if (data.mensaje) { showToast(data.mensaje); return; }
+        this.resultadosDebito = data.resultados;
+        if (data.resultados.length === 0) {
+          showToast(`ePagos no devolvió resultados (se consultaron ${data.consultados} cobros)`);
+        }
+        bootstrap.Modal.getOrCreateInstance(this.$refs.modalDebito).show();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      } finally {
+        this.verificandoDebito = false;
       }
     },
 
