@@ -157,7 +157,16 @@ class EpagosClient:
         self._validar(resp.id_resp, resp.respuesta)
         return [self._to_dict(p) for p in (resp.pago or [])]
 
-    def obtener_rendiciones(self, fecha_desde: date, fecha_hasta: date) -> list[dict]:
+    def obtener_rendiciones(
+        self, fecha_desde: date, fecha_hasta: date, timeout: int = 180
+    ) -> list[dict]:
+        """
+        Lista las rendiciones del período. ePagos incluye el detalle
+        transacción-por-transacción de cada rendición, por lo que el XML puede
+        ser muy grande (miles de filas) y tardar bastante en descargarse. Por
+        eso se usa un timeout más amplio que el de las demás llamadas, solo
+        para esta operación.
+        """
         criterios = {
             "Fecha_desde": fecha_desde.strftime("%Y-%m-%d"),
             "Fecha_hasta": fecha_hasta.strftime("%Y-%m-%d"),
@@ -168,16 +177,23 @@ class EpagosClient:
                 API_VERSION, self._creds_pago(), criterios
             )
 
-        resp = _llamar()
+        # Subir temporalmente el timeout de operación solo para esta consulta
+        transport = self._soap.transport
+        _old_timeout = transport.operation_timeout
+        transport.operation_timeout = timeout
         try:
-            self._validar(resp.id_resp, resp.respuesta)
-        except EpagosError as e:
-            if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
-                self._token = None
-                resp = _llamar()
+            resp = _llamar()
+            try:
                 self._validar(resp.id_resp, resp.respuesta)
-            else:
-                raise
+            except EpagosError as e:
+                if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
+                    self._token = None
+                    resp = _llamar()
+                    self._validar(resp.id_resp, resp.respuesta)
+                else:
+                    raise
+        finally:
+            transport.operation_timeout = _old_timeout
         return [self._to_dict(r) for r in (resp.rendicion or [])]
 
     # ------------------------------------------------------------------
