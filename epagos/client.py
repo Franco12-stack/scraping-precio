@@ -81,7 +81,10 @@ class EpagosClient:
 
         wsdl = WSDL_SANDBOX if self.entorno == "sandbox" else WSDL_PRODUCCION
         settings = Settings(strict=False, xml_huge_tree=True)
-        self._soap = Client(wsdl, settings=settings, transport=Transport(session=Session()))
+        self._soap = Client(
+            wsdl, settings=settings,
+            transport=Transport(session=Session(), operation_timeout=30),
+        )
         self._token:    Optional[str] = None
         self._soap_v2:  Optional[Any] = None   # lazy — solo para registrar_cuentas_cliente
         self._token_v2: Optional[str] = None   # token independiente para v2.1
@@ -183,7 +186,10 @@ class EpagosClient:
         if self._soap_v2 is None:
             wsdl = WSDL_SANDBOX_V2 if self.entorno == "sandbox" else WSDL_PRODUCCION_V2
             settings = Settings(strict=False, xml_huge_tree=True)
-            self._soap_v2 = Client(wsdl, settings=settings, transport=Transport(session=Session()))
+            self._soap_v2 = Client(
+                wsdl, settings=settings,
+                transport=Transport(session=Session(), operation_timeout=30),
+            )
         return self._soap_v2
 
     def _tipo_v2(self, nombre: str):
@@ -265,30 +271,38 @@ class EpagosClient:
         de id_transaccion. A diferencia de obtener_pagos, no espera a que se
         complete la acreditación (72 hs hábiles) — informa el resultado del
         intento en sí.
+
+        Se consulta en lotes (no todo en un solo request) porque con miles de
+        id_transaccion un único llamado SOAP queda colgado del lado de ePagos.
         """
         ids = [int(i) for i in ids_transaccion if i]
         if not ids:
             return []
         ArrayDatosDebito = self._tipo_v2("ArrayDatosDebito")
+        TAMANO_LOTE = 200
 
-        def _llamar():
+        def _llamar(lote):
             return self._v2().service.obtener_resultados_debito(
                 API_VERSION_V2,
                 {"id_organismo": self.id_organismo, "token": self._token_valido_v2()},
-                ArrayDatosDebito(ids),
+                ArrayDatosDebito(lote),
             )
 
-        resp = _llamar()
-        try:
-            self._validar(resp.id_resp, resp.respuesta)
-        except EpagosError as e:
-            if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
-                self._token_v2 = None
-                resp = _llamar()
+        resultados: list[dict] = []
+        for i in range(0, len(ids), TAMANO_LOTE):
+            lote = ids[i:i + TAMANO_LOTE]
+            resp = _llamar(lote)
+            try:
                 self._validar(resp.id_resp, resp.respuesta)
-            else:
-                raise
-        return [self._to_dict(r) for r in (resp.resultados or [])]
+            except EpagosError as e:
+                if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
+                    self._token_v2 = None
+                    resp = _llamar(lote)
+                    self._validar(resp.id_resp, resp.respuesta)
+                else:
+                    raise
+            resultados.extend(self._to_dict(r) for r in (resp.resultados or []))
+        return resultados
 
     # ------------------------------------------------------------------
     # Recurrencia — cobros por débito directo
