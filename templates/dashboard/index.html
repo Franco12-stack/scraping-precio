@@ -65,11 +65,17 @@
       <div class="card stat-card shadow-sm p-3 h-100">
         <div class="d-flex justify-content-between align-items-start">
           <div>
-            <div class="text-muted small mb-1">Monto acreditado</div>
-            <div class="fs-3 fw-bold">$ <span x-text="stats ? animMonto() : '—'"></span></div>
-            <span class="small text-muted">ARS total</span>
+            <div class="text-muted small mb-1">Neto a la fundación</div>
+            <div class="fs-3 fw-bold text-success">$ <span x-text="stats ? animMonto() : '—'"></span></div>
+            <div class="small text-muted" x-show="stats">
+              Bruto $ <span x-text="stats ? fmtMonto(stats.monto_acreditado) : '—'"></span>
+            </div>
+            <div class="small text-danger" x-show="stats">
+              − comisión $ <span x-text="stats ? fmtMonto(stats.monto_comision) : '—'"></span>
+              (<span x-text="stats ? stats.comision_pct : '—'"></span>%)
+            </div>
           </div>
-          <div class="fs-2 text-danger opacity-25"><i class="bi bi-cash-coin"></i></div>
+          <div class="fs-2 text-success opacity-25"><i class="bi bi-cash-coin"></i></div>
         </div>
       </div>
     </div>
@@ -231,13 +237,13 @@ function dashboardApp() {
         this._counters.total_clientes = Math.round(this._targets.total_clientes * ease);
         this._counters.total_cuentas  = Math.round(this._targets.total_cuentas  * ease);
         this._counters.total_cobros   = Math.round(this._targets.total_cobros   * ease);
-        this._counters.monto = this.stats.monto_acreditado * ease;
+        this._counters.monto = this.stats.monto_neto * ease;
         if (paso >= pasos) {
           clearInterval(timer);
           this._counters.total_clientes = this._targets.total_clientes;
           this._counters.total_cuentas  = this._targets.total_cuentas;
           this._counters.total_cobros   = this._targets.total_cobros;
-          this._counters.monto = this.stats.monto_acreditado;
+          this._counters.monto = this.stats.monto_neto;
         }
       }, intervalo);
     },
@@ -247,7 +253,7 @@ function dashboardApp() {
     },
 
     animMonto() {
-      const v = this._counters.monto !== undefined ? this._counters.monto : (this.stats ? this.stats.monto_acreditado : 0);
+      const v = this._counters.monto !== undefined ? this._counters.monto : (this.stats ? this.stats.monto_neto : 0);
       return this.fmtMonto(v);
     },
 

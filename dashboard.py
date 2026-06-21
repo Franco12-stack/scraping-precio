@@ -462,6 +462,14 @@ MEDIOS_PAGO_POR_CONVENIO = {
     29642: "HomeBanking",
 }
 
+# Comisión que ePagos retiene sobre lo percibido. Las donaciones recurrentes
+# se cobran por Débito Directo (Debin, convenio 28642): 0,80% + IVA 21% sobre
+# esa comisión (según mail de ePagos del 8-jun-2026). Efectivo = 0,968%.
+COMISION_DEBIN_PCT = 0.80          # comisión base, sin IVA
+IVA_PCT            = 21.0          # IVA aplicado sobre la comisión
+# Tasa efectiva sobre el monto cobrado: 0,008 * 1,21 = 0,00968
+COMISION_EFECTIVA  = (COMISION_DEBIN_PCT / 100.0) * (1 + IVA_PCT / 100.0)
+
 
 def _coerce_date(v) -> Optional[date]:
     """Devuelve un date a partir de date/datetime/str, o None."""
@@ -714,6 +722,11 @@ def api_stats(request: Request):
         monto_acreditado = db.query(func.sum(Cobro.importe)).filter(
             Cobro.estado == "acreditado"
         ).scalar() or 0.0
+        monto_acreditado = float(monto_acreditado)
+        # Lo que queda neto a la fundación, descontando la comisión de ePagos
+        # (Débito Directo / Debin: 0,80% + IVA 21% = 0,968% efectivo).
+        monto_comision = monto_acreditado * COMISION_EFECTIVA
+        monto_neto     = monto_acreditado - monto_comision
 
         # Cobros por estado
         rows = db.query(Cobro.estado, func.count(Cobro.id)).group_by(Cobro.estado).all()
@@ -744,7 +757,10 @@ def api_stats(request: Request):
             "total_clientes":   total_clientes,
             "total_cuentas":    total_cuentas,
             "total_cobros":     total_cobros,
-            "monto_acreditado": round(float(monto_acreditado), 2),
+            "monto_acreditado": round(monto_acreditado, 2),
+            "monto_comision":   round(monto_comision, 2),
+            "monto_neto":       round(monto_neto, 2),
+            "comision_pct":     round(COMISION_EFECTIVA * 100, 3),
             "cobros_por_estado": cobros_por_estado,
             "cobros_por_mes":   cobros_por_mes,
         }
