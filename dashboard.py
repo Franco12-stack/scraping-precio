@@ -448,6 +448,21 @@ def _fecha_str(v) -> str:
     return str(v)[:10]
 
 
+# Nombre del medio de pago por número de convenio (info de ePagos, mail 8/6/2026).
+# Permite mostrar "Débito Directo (Debin)" en vez del número suelto en Rendiciones.
+MEDIOS_PAGO_POR_CONVENIO = {
+    21642: "Convenio Billetera",
+    22643: "Transferencias 3.0",
+    23642: "Tarjetas de Crédito",
+    24642: "Tarjetas de Débito",
+    25642: "Redes de Pago",
+    26642: "Bancos",
+    27642: "Recaudación por CVU",
+    28642: "Débito Directo (Debin)",
+    29642: "HomeBanking",
+}
+
+
 def _coerce_date(v) -> Optional[date]:
     """Devuelve un date a partir de date/datetime/str, o None."""
     if not v:
@@ -509,6 +524,7 @@ def api_rendiciones(request: Request, dias: int = 30):
             "numero":                  numrend,
             "secuencia":               r.get("Secuencia"),
             "convenio":                r.get("Convenio"),
+            "medio_pago":              MEDIOS_PAGO_POR_CONVENIO.get(r.get("Convenio"), ""),
             "estado":                  r.get("Estado"),
             "fecha_desde":             _fecha_str(r.get("Fecha_desde")),
             "fecha_hasta":             _fecha_str(r.get("Fecha_hasta")),

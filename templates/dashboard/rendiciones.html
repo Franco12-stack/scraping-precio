@@ -131,7 +131,7 @@
           <thead>
             <tr>
               <th>N°</th>
-              <th>Convenio</th>
+              <th>Convenio / Medio de pago</th>
               <th>Sec.</th>
               <th>Estado</th>
               <th class="text-end">Monto percibido</th>
@@ -145,7 +145,12 @@
             <template x-for="r in rendiciones" :key="r.numero">
               <tr>
                 <td class="font-monospace small" x-text="r.numero"></td>
-                <td class="font-monospace small" x-text="r.convenio"></td>
+                <td class="small">
+                  <span class="font-monospace" x-text="r.convenio"></span>
+                  <template x-if="r.medio_pago">
+                    <span class="d-block text-muted" x-text="r.medio_pago"></span>
+                  </template>
+                </td>
                 <td class="small" x-text="r.secuencia"></td>
                 <td>
                   <span class="badge"
