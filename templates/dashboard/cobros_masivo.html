@@ -183,8 +183,8 @@
         <thead class="table-light">
           <tr>
             <th class="ps-3" style="width:40px">
-              <input type="checkbox" class="form-check-input"
-                     @change="$event.target.checked ? seleccionarTodos() : deseleccionarTodos()">
+              <input type="checkbox" class="form-check-input" title="Seleccionar/deseleccionar esta página"
+                     @change="seleccionarPagina($event.target.checked)">
             </th>
             <th>Cliente</th>
             <th>ID ePagos</th>
@@ -198,7 +198,7 @@
               No hay clientes con CBU registrado. Sincronizá los CBU desde la sección Clientes.
             </td></tr>
           </template>
-          <template x-for="row in conCBU" :key="row.cliente_id + '-' + row.cuenta_id">
+          <template x-for="row in conCBUPagina" :key="row.cliente_id + '-' + row.cuenta_id">
             <tr :class="row.seleccionado ? 'table-warning' : ''">
               <td class="ps-3">
                 <input type="checkbox" class="form-check-input"
@@ -233,6 +233,26 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Paginación -->
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 p-3 border-top"
+         x-show="totalPaginas > 1">
+      <span class="text-muted small">
+        Mostrando
+        <strong x-text="(pagina - 1) * porPagina + 1"></strong>–<strong
+          x-text="Math.min(pagina * porPagina, conCBU.length)"></strong>
+        de <strong x-text="conCBU.length"></strong>
+      </span>
+      <div class="btn-group">
+        <button class="btn btn-sm btn-outline-secondary" @click="pagina = 1" :disabled="pagina === 1">«</button>
+        <button class="btn btn-sm btn-outline-secondary" @click="pagina--" :disabled="pagina === 1">‹</button>
+        <span class="btn btn-sm btn-light disabled">
+          Página <span x-text="pagina"></span> / <span x-text="totalPaginas"></span>
+        </span>
+        <button class="btn btn-sm btn-outline-secondary" @click="pagina++" :disabled="pagina === totalPaginas">›</button>
+        <button class="btn btn-sm btn-outline-secondary" @click="pagina = totalPaginas" :disabled="pagina === totalPaginas">»</button>
+      </div>
+    </div>
   </div>
 
   <!-- Sin CBU -->
@@ -260,6 +280,8 @@ function masivosApp() {
     config: { importe: '1900', tipo: 'inmediato', fecha_cobro: '', fecha_debito: '', descripcion: 'fundcolab' },
     conCBU: [],
     sinCBU: [],
+    pagina: 1,
+    porPagina: 50,
     ejecutando: false,
     progreso: 0,
     totalEnProceso: 0,
@@ -322,6 +344,21 @@ function masivosApp() {
       } finally {
         this.reintentando = false;
       }
+    },
+
+    get totalPaginas() {
+      return Math.max(1, Math.ceil(this.conCBU.length / this.porPagina));
+    },
+
+    // Solo renderiza la página actual (evita pintar miles de filas con inputs)
+    get conCBUPagina() {
+      const p = Math.min(Math.max(1, this.pagina), this.totalPaginas);
+      const inicio = (p - 1) * this.porPagina;
+      return this.conCBU.slice(inicio, inicio + this.porPagina);
+    },
+
+    seleccionarPagina(valor) {
+      this.conCBUPagina.forEach(r => r.seleccionado = valor);
     },
 
     get seleccionados() {
