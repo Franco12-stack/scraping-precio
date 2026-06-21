@@ -1608,6 +1608,14 @@ def api_conciliar_rendiciones(request: Request, dias: int = 90):
     except Exception as exc:
         return JSONResponse({"error": f"Error al consultar ePagos: {exc}"}, status_code=500)
 
+    # Diagnóstico: ver la forma del primer registro y su detalle
+    if crudo:
+        r0 = crudo[0]
+        print(f"[conciliar] keys rendicion[0]: {list(r0.keys())}", flush=True)
+        det0 = r0.get("Detalles")
+        print(f"[conciliar] Detalles type={type(det0).__name__} repr={repr(det0)[:400]}", flush=True)
+        print(f"[conciliar] Cantidad campo={r0.get('Cantidad')} Numero={r0.get('Numero')}", flush=True)
+
     # Índices: por numero_operacion y por codigo_unico_transaccion → fecha de depósito
     por_numop: dict[str, Optional[date]] = {}
     por_cut:   dict[str, Optional[date]] = {}
