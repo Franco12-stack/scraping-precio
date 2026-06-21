@@ -83,7 +83,10 @@ class EpagosClient:
         settings = Settings(strict=False, xml_huge_tree=True)
         self._soap = Client(
             wsdl, settings=settings,
-            transport=Transport(session=Session(), operation_timeout=30),
+            # operation_timeout: corta las llamadas SOAP lentas.
+            # timeout: corta la descarga de esquemas externos (ej. schemas.xmlsoap.org),
+            #          que por defecto es 300s y puede colgar el request entero.
+            transport=Transport(session=Session(), timeout=30, operation_timeout=30),
         )
         self._token:    Optional[str] = None
         self._soap_v2:  Optional[Any] = None   # lazy — solo para registrar_cuentas_cliente
@@ -188,7 +191,7 @@ class EpagosClient:
             settings = Settings(strict=False, xml_huge_tree=True)
             self._soap_v2 = Client(
                 wsdl, settings=settings,
-                transport=Transport(session=Session(), operation_timeout=30),
+                transport=Transport(session=Session(), timeout=30, operation_timeout=30),
             )
         return self._soap_v2
 
