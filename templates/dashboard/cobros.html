@@ -275,7 +275,7 @@ function cobrosApp() {
     async conciliarRendiciones() {
       this.conciliando = true;
       try {
-        const res  = await fetch('/api/cobros/conciliar_rendiciones?dias=90', { method: 'POST' });
+        const res  = await fetch('/api/cobros/conciliar_rendiciones?dias=30', { method: 'POST' });
         const data = await res.json();
         if (!res.ok) { showToast(data.error || 'Error al conciliar', 'error'); return; }
         if (data.actualizados > 0) {

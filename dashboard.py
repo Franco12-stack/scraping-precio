@@ -1588,7 +1588,7 @@ def api_verificar_debito(request: Request):
 
 
 @router.post("/api/cobros/conciliar_rendiciones")
-def api_conciliar_rendiciones(request: Request, dias: int = 90):
+def api_conciliar_rendiciones(request: Request, dias: int = 30):
     """Cruza el historial de cobros con las rendiciones de ePagos: toda
     operación que aparece en una rendición fue efectivamente cobrada, así que
     se marca el cobro como 'acreditado' y se completa la fecha de cobro con la
