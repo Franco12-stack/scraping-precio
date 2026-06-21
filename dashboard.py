@@ -1459,9 +1459,19 @@ def api_verificar_debito(request: Request):
     except Exception as exc:
         return JSONResponse({"error": f"Error al consultar ePagos: {exc}"}, status_code=500)
 
+    # Diagnóstico: ver qué devuelve ePagos en crudo (campos y primera fila)
+    print(f"[verificar_debito] ePagos devolvió {len(resultados_epagos)} filas", flush=True)
+    if resultados_epagos:
+        print(f"[verificar_debito] Campos: {list(resultados_epagos[0].keys())}", flush=True)
+        print(f"[verificar_debito] Primera fila: {resultados_epagos[0]}", flush=True)
+
     resultados = []
     for r in resultados_epagos:
-        op = str(r.get("operacion") or "")
+        # ePagos puede nombrar el campo de la operación de varias formas
+        op = str(
+            r.get("operacion") or r.get("id_transaccion") or
+            r.get("id_trans") or r.get("numero_operacion") or ""
+        ).strip()
         info = por_id_trans.get(op)
         if not info:
             continue
@@ -1472,6 +1482,7 @@ def api_verificar_debito(request: Request):
             "resultado":        r.get("resultado"),
         })
 
+    print(f"[verificar_debito] FIN — epagos={len(resultados_epagos)} mapeados={len(resultados)}", flush=True)
     return {"resultados": resultados, "consultados": len(por_id_trans)}
 
 
