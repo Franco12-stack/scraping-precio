@@ -212,17 +212,21 @@
       <i class="bi bi-hourglass-split me-1"></i>Pendientes <span class="badge bg-light text-dark ms-1" x-text="conteo.pendiente"></span>
     </button>
 
-    <!-- Acción masiva sobre el filtro de contracargos -->
-    <button class="btn btn-sm btn-danger ms-auto"
-            x-show="filtroEstado === 'contracargo' && clientesFiltrados.length > 0"
-            @click="eliminarContracargos()"
-            :disabled="eliminandoMasivo">
-      <span x-show="!eliminandoMasivo">
-        <i class="bi bi-trash3 me-1"></i>Eliminar los <span x-text="clientesFiltrados.length"></span> con contracargo
-      </span>
-      <span x-show="eliminandoMasivo">
-        <span class="spinner-border spinner-sm me-1"></span>Eliminando…
-      </span>
+    <button class="btn btn-sm btn-link ms-auto" @click="seleccionarTodosFiltrados()" x-show="clientesFiltrados.length > 0">
+      Seleccionar los <span x-text="clientesFiltrados.length"></span> filtrados
+    </button>
+  </div>
+
+  <!-- Barra de selección masiva -->
+  <div class="d-flex flex-wrap gap-2 mb-3 align-items-center alert alert-secondary py-2"
+       x-show="seleccionados.size > 0">
+    <strong x-text="seleccionados.size"></strong> seleccionado(s)
+    <button class="btn btn-sm btn-outline-secondary" @click="seleccionados = new Set()">
+      Deseleccionar todo
+    </button>
+    <button class="btn btn-sm btn-danger ms-auto" @click="eliminarSeleccionados()" :disabled="eliminandoMasivo">
+      <span x-show="!eliminandoMasivo"><i class="bi bi-trash3 me-1"></i>Eliminar seleccionados</span>
+      <span x-show="eliminandoMasivo"><span class="spinner-border spinner-sm me-1"></span>Eliminando…</span>
     </button>
   </div>
 
@@ -245,6 +249,10 @@
         <table class="table table-hover align-middle mb-0">
           <thead class="table-light">
             <tr>
+              <th class="text-center">
+                <input type="checkbox" class="form-check-input" :checked="todosPaginaSeleccionados"
+                       @change="toggleSeleccionarPagina($event)">
+              </th>
               <th>Cliente</th>
               <th>Email</th>
               <th>DNI</th>
@@ -258,7 +266,7 @@
           <tbody>
             <template x-if="clientesFiltrados.length === 0">
               <tr>
-                <td colspan="8" class="text-center text-muted py-5">
+                <td colspan="9" class="text-center text-muted py-5">
                   <template x-if="busqueda">
                     <span>No hay resultados para "<strong x-text="busqueda"></strong>"</span>
                   </template>
@@ -269,7 +277,11 @@
               </tr>
             </template>
             <template x-for="cl in clientesPagina" :key="cl.id">
-              <tr>
+              <tr :class="seleccionados.has(cl.id) ? 'table-active' : ''">
+                <td class="text-center">
+                  <input type="checkbox" class="form-check-input" :checked="seleccionados.has(cl.id)"
+                         @change="toggleSeleccionado(cl.id)">
+                </td>
                 <td>
                   <a :href="'/dashboard/clientes/' + cl.id" class="fw-semibold text-decoration-none">
                     <span x-text="cl.apellido + ', ' + cl.nombre"></span>
@@ -341,6 +353,7 @@ function clientesApp() {
     filtroEstado: 'todos',
     pagina: 1,
     porPagina: 50,
+    seleccionados: new Set(),
     eliminandoMasivo: false,
     cargando: false,
     error: null,
@@ -459,27 +472,54 @@ function clientesApp() {
       }
     },
 
-    async eliminarContracargos() {
-      const lista = this.clientesFiltrados.slice();
-      if (lista.length === 0) return;
-      if (!confirm(`¿Eliminar definitivamente ${lista.length} cliente(s) que hicieron contracargo? ` +
-                   `Esta acción borra el cliente y todos sus datos.`)) return;
+    get todosPaginaSeleccionados() {
+      return this.clientesPagina.length > 0 &&
+             this.clientesPagina.every(cl => this.seleccionados.has(cl.id));
+    },
+
+    toggleSeleccionado(id) {
+      const nuevo = new Set(this.seleccionados);
+      if (nuevo.has(id)) nuevo.delete(id); else nuevo.add(id);
+      this.seleccionados = nuevo;
+    },
+
+    toggleSeleccionarPagina(ev) {
+      const nuevo = new Set(this.seleccionados);
+      if (ev.target.checked) {
+        this.clientesPagina.forEach(cl => nuevo.add(cl.id));
+      } else {
+        this.clientesPagina.forEach(cl => nuevo.delete(cl.id));
+      }
+      this.seleccionados = nuevo;
+    },
+
+    seleccionarTodosFiltrados() {
+      const nuevo = new Set(this.seleccionados);
+      this.clientesFiltrados.forEach(cl => nuevo.add(cl.id));
+      this.seleccionados = nuevo;
+    },
+
+    async eliminarSeleccionados() {
+      const ids = Array.from(this.seleccionados);
+      if (ids.length === 0) return;
+      if (!confirm(`¿Eliminar definitivamente ${ids.length} cliente(s) y todos sus datos? ` +
+                   `Esta acción no se puede deshacer.`)) return;
       this.eliminandoMasivo = true;
       let ok = 0, fallidos = 0;
+      const exitosos = new Set();
       try {
-        for (const cl of lista) {
+        for (const id of ids) {
           try {
-            const res = await fetch('/api/clientes/' + cl.id, { method: 'DELETE' });
-            if (res.ok) {
-              this.clientes = this.clientes.filter(c => c.id !== cl.id);
-              ok++;
-            } else {
-              fallidos++;
-            }
+            const res = await fetch('/api/clientes/' + id, { method: 'DELETE' });
+            if (res.ok) { exitosos.add(id); ok++; } else { fallidos++; }
           } catch (e) {
             fallidos++;
           }
         }
+        this.clientes = this.clientes.filter(c => !exitosos.has(c.id));
+        this.seleccionados = new Set(
+          Array.from(this.seleccionados).filter(id => !exitosos.has(id))
+        );
         showToast(`✅ ${ok} cliente(s) eliminados${fallidos ? ' · ⚠️ ' + fallidos + ' con error' : ''}`,
                   fallidos ? 'error' : 'success');
       } finally {
