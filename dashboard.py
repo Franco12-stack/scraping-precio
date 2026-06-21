@@ -270,6 +270,7 @@ def importar_clientes(
     epagos_ok = 0
     epagos_error = 0
     errores = []
+    duplicados = []
 
     ep = _epagos()
 
@@ -289,10 +290,22 @@ def importar_clientes(
 
             cbu = str(cbu_raw).strip() if cbu_raw else None
 
-            identificador = f"CLI-{cuit}"
-            if db.query(Cliente).filter(Cliente.identificador_cliente == identificador).first():
+            # Identificamos al cliente por CUIT (no por identificador_cliente):
+            # puede haber clientes creados por otras vías con un identificador
+            # distinto pero el mismo CUIT, y esos también son duplicados.
+            existente = db.query(Cliente).filter(Cliente.cuit == cuit).first()
+            if existente:
                 omitidos += 1
+                duplicados.append({
+                    "fila":   i,
+                    "titular": str(titular),
+                    "cuit":   cuit,
+                    "motivo": f"CUIT ya registrado (cliente existente: "
+                              f"{existente.apellido}, {existente.nombre})",
+                })
                 continue
+
+            identificador = f"CLI-{cuit}"
 
             nombre, apellido = _parsear_nombre(titular)
             dni = _dni_desde_cuit(cuit)
@@ -336,6 +349,7 @@ def importar_clientes(
     return JSONResponse({
         "creados": creados,
         "omitidos": omitidos,
+        "duplicados": duplicados,
         "epagos_ok": epagos_ok,
         "epagos_error": epagos_error,
         "errores": errores,
@@ -848,6 +862,13 @@ async def api_crear_cliente(request: Request):
         ).first()
         if existe:
             return JSONResponse({"error": "El identificador ya existe"}, status_code=409)
+        existe_cuit = db.query(Cliente).filter(Cliente.cuit == int(cuit)).first()
+        if existe_cuit:
+            return JSONResponse(
+                {"error": f"Ese CUIT ya está registrado (cliente: "
+                          f"{existe_cuit.apellido}, {existe_cuit.nombre})"},
+                status_code=409,
+            )
         cliente = Cliente(
             identificador_cliente=identificador_cliente,
             nombre=nombre,

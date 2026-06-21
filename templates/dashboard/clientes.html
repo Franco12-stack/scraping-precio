@@ -68,6 +68,33 @@
           </template>
         </div>
       </template>
+
+      <!-- Detalle de duplicados (por CUIT) -->
+      <template x-if="resultadoImportar && resultadoImportar.duplicados && resultadoImportar.duplicados.length">
+        <div class="mt-2 card border-warning border-opacity-50">
+          <div class="card-header bg-warning bg-opacity-10 small fw-semibold py-2">
+            <i class="bi bi-files me-1"></i>
+            <span x-text="resultadoImportar.duplicados.length + ' fila(s) omitidas por CUIT ya registrado'"></span>
+          </div>
+          <div class="table-responsive" style="max-height: 260px;">
+            <table class="table table-sm mb-0 small">
+              <thead class="table-light">
+                <tr><th>Fila</th><th>Titular</th><th>CUIT</th><th>Motivo</th></tr>
+              </thead>
+              <tbody>
+                <template x-for="d in resultadoImportar.duplicados" :key="d.fila">
+                  <tr>
+                    <td x-text="d.fila"></td>
+                    <td x-text="d.titular"></td>
+                    <td class="font-monospace" x-text="d.cuit"></td>
+                    <td class="text-muted" x-text="d.motivo"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 
