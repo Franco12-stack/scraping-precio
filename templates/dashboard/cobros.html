@@ -15,6 +15,10 @@
         <span x-show="!verificandoDebito"><i class="bi bi-bank me-1"></i>Verificar intento de débito</span>
         <span x-show="verificandoDebito"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ePagos…</span>
       </button>
+      <button class="btn btn-sm btn-success" @click="conciliarRendiciones()" :disabled="conciliando">
+        <span x-show="!conciliando"><i class="bi bi-cash-stack me-1"></i>Marcar cobrados (rendiciones)</span>
+        <span x-show="conciliando"><span class="spinner-border spinner-border-sm me-1"></span>Conciliando… (puede tardar ~1-2 min)</span>
+      </button>
       <button class="btn btn-sm btn-outline-secondary" @click="cargar(1)" :disabled="cargando">
         <i class="bi bi-arrow-repeat me-1" :class="{'spin': cargando}"></i>Actualizar
       </button>
@@ -210,6 +214,7 @@ function cobrosApp() {
     cargando: false,
     sincronizando: false,
     verificandoDebito: false,
+    conciliando: false,
     resultadosDebito: [],
     errorMsg: null,
     busqueda: '',
@@ -264,6 +269,27 @@ function cobrosApp() {
         showToast('Error: ' + e.message, 'error');
       } finally {
         this.verificandoDebito = false;
+      }
+    },
+
+    async conciliarRendiciones() {
+      this.conciliando = true;
+      try {
+        const res  = await fetch('/api/cobros/conciliar_rendiciones?dias=90', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Error al conciliar', 'error'); return; }
+        if (data.actualizados > 0) {
+          showToast(`✅ ${data.actualizados} cobro(s) marcados como cobrados según las rendiciones`);
+          await this.cargar(this.pagina);
+        } else if (data.mensaje) {
+          showToast(data.mensaje);
+        } else {
+          showToast(`No hubo cobros nuevos para marcar (ePagos reportó ${data.cobradas_epagos} operaciones en ${data.rendiciones} rendiciones)`);
+        }
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      } finally {
+        this.conciliando = false;
       }
     },
 

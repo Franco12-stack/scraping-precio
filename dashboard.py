@@ -448,6 +448,39 @@ def _fecha_str(v) -> str:
     return str(v)[:10]
 
 
+def _coerce_date(v) -> Optional[date]:
+    """Devuelve un date a partir de date/datetime/str, o None."""
+    if not v:
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _iter_detalles(det):
+    """Recorre el detalle de una rendición sin importar su forma exacta
+    (lista de dicts, dict con la lista adentro, o un único detalle)."""
+    if not det:
+        return
+    if isinstance(det, dict):
+        if "Numero_operacion" in det or "Codigo_unico_transaccion" in det:
+            yield det
+            return
+        for v in det.values():
+            if isinstance(v, list):
+                yield from v
+        return
+    if isinstance(det, list):
+        for item in det:
+            if isinstance(item, dict):
+                yield item
+
+
 @router.get("/api/rendiciones")
 def api_rendiciones(request: Request, dias: int = 90):
     """Lista las rendiciones (liquidaciones) de ePagos de los últimos `dias`.
@@ -1552,6 +1585,81 @@ def api_verificar_debito(request: Request):
 
     print(f"[verificar_debito] FIN — epagos={len(resultados_epagos)} mapeados={len(resultados)}", flush=True)
     return {"resultados": resultados, "consultados": len(por_id_trans)}
+
+
+@router.post("/api/cobros/conciliar_rendiciones")
+def api_conciliar_rendiciones(request: Request, dias: int = 90):
+    """Cruza el historial de cobros con las rendiciones de ePagos: toda
+    operación que aparece en una rendición fue efectivamente cobrada, así que
+    se marca el cobro como 'acreditado' y se completa la fecha de cobro con la
+    fecha de depósito de la rendición."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    fecha_hasta = date.today()
+    fecha_desde = fecha_hasta - timedelta(days=max(1, min(dias, 365)))
+
+    ep = _epagos()
+    try:
+        crudo = ep.obtener_rendiciones(fecha_desde, fecha_hasta)
+    except EpagosError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"error": f"Error al consultar ePagos: {exc}"}, status_code=500)
+
+    # Índices: por numero_operacion y por codigo_unico_transaccion → fecha de depósito
+    por_numop: dict[str, Optional[date]] = {}
+    por_cut:   dict[str, Optional[date]] = {}
+    for r in crudo:
+        fdep = _coerce_date(
+            r.get("Fecha_deposito") or r.get("Fecha_estimada_deposito") or r.get("Fecha_hasta")
+        )
+        for d in _iter_detalles(r.get("Detalles")):
+            op  = str(d.get("Numero_operacion") or "").strip()
+            cut = str(d.get("Codigo_unico_transaccion") or "").strip()
+            if op:
+                por_numop.setdefault(op, fdep)
+            if cut and cut.isdigit():
+                por_cut.setdefault(cut, fdep)
+
+    print(f"[conciliar] rendiciones={len(crudo)} ops_numop={len(por_numop)} ops_cut={len(por_cut)}", flush=True)
+    if por_numop:
+        print(f"[conciliar] muestra numero_operacion ePagos: {list(por_numop)[:3]}", flush=True)
+
+    if not por_numop and not por_cut:
+        return {
+            "actualizados": 0,
+            "cobradas_epagos": 0,
+            "rendiciones": len(crudo),
+            "mensaje": "Las rendiciones del período no traen operaciones para conciliar",
+        }
+
+    actualizados = 0
+    with get_session() as db:
+        cobros = db.query(Cobro).filter(Cobro.estado != "acreditado").all()
+        for c in cobros:
+            fdep = None
+            matched = False
+            if c.numero_operacion and c.numero_operacion in por_numop:
+                matched = True
+                fdep = por_numop[c.numero_operacion]
+            elif c.id_transaccion and str(c.id_transaccion) in por_cut:
+                matched = True
+                fdep = por_cut[str(c.id_transaccion)]
+            if matched:
+                c.estado = "acreditado"
+                if not c.fecha_cobro and fdep:
+                    c.fecha_cobro = fdep
+                actualizados += 1
+        db.commit()
+
+    print(f"[conciliar] FIN actualizados={actualizados}", flush=True)
+    return {
+        "actualizados":    actualizados,
+        "cobradas_epagos": len(por_numop) + len(por_cut),
+        "rendiciones":     len(crudo),
+    }
 
 
 @router.post("/api/cobros/reintentar_fallidos")
