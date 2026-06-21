@@ -278,8 +278,9 @@ function cobrosApp() {
         const res  = await fetch('/api/cobros/conciliar_rendiciones?dias=30', { method: 'POST' });
         const data = await res.json();
         if (!res.ok) { showToast(data.error || 'Error al conciliar', 'error'); return; }
-        if (data.actualizados > 0) {
-          showToast(`✅ ${data.actualizados} cobro(s) marcados como cobrados según las rendiciones`);
+        const cc = data.contracargos ? ` · ⚠️ ${data.contracargos} contracargo(s) marcados como devueltos` : '';
+        if (data.actualizados > 0 || data.contracargos > 0) {
+          showToast(`✅ ${data.actualizados} cobro(s) marcados como cobrados según las rendiciones${cc}`);
           await this.cargar(this.pagina);
         } else if (data.mensaje) {
           showToast(data.mensaje);

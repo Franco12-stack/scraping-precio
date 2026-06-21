@@ -773,12 +773,40 @@ def api_listar_clientes(request: Request):
         return err
     with get_session() as db:
         clientes = db.query(Cliente).order_by(Cliente.apellido).all()
+
+        # Total acreditado por cliente (una sola consulta agrupada)
+        total_por_cliente: dict[int, float] = {}
+        filas_total = (
+            db.query(Cobro.cliente_id, func.sum(Cobro.importe))
+            .filter(Cobro.estado == "acreditado")
+            .group_by(Cobro.cliente_id)
+            .all()
+        )
+        for cid, total in filas_total:
+            total_por_cliente[cid] = float(total or 0.0)
+
+        # Conjunto de estados de cobro por cliente (una sola consulta agrupada)
+        estados_por_cliente: dict[int, set[str]] = {}
+        filas_estado = (
+            db.query(Cobro.cliente_id, Cobro.estado)
+            .group_by(Cobro.cliente_id, Cobro.estado)
+            .all()
+        )
+        for cid, estado in filas_estado:
+            estados_por_cliente.setdefault(cid, set()).add(estado or "")
+
+        def _estado_cliente(cid: int) -> str:
+            estados = estados_por_cliente.get(cid)
+            if not estados:
+                return "sin_cobro"          # nunca se le hizo un cobro
+            if "devuelto" in estados:
+                return "contracargo"        # tuvo contracargo/devolución
+            if "acreditado" in estados:
+                return "acreditado"         # se le cobró y se acreditó
+            return "pendiente"              # tiene cobros pero ninguno firme
+
         result = []
         for cl in clientes:
-            total_cobrado = db.query(func.sum(Cobro.importe)).filter(
-                Cobro.cliente_id == cl.id,
-                Cobro.estado == "acreditado",
-            ).scalar() or 0.0
             result.append({
                 "id":                    cl.id,
                 "nombre":                cl.nombre,
@@ -788,7 +816,8 @@ def api_listar_clientes(request: Request):
                 "cuit":                  cl.cuit,
                 "identificador_cliente": cl.identificador_cliente,
                 "num_cuentas":           len(cl.cuentas),
-                "total_cobrado":         round(float(total_cobrado), 2),
+                "total_cobrado":         round(total_por_cliente.get(cl.id, 0.0), 2),
+                "estado_cobro":          _estado_cliente(cl.id),
                 "creado_en":             cl.creado_en.isoformat(),
             })
         return result
@@ -1694,6 +1723,8 @@ def api_conciliar_rendiciones(request: Request, dias: int = 30):
     # Índices: por numero_operacion y por codigo_unico_transaccion → fecha de depósito
     por_numop: dict[str, Optional[date]] = {}
     por_cut:   dict[str, Optional[date]] = {}
+    # Transacciones que tuvieron contracargo o devolución (por codigo_unico_transaccion)
+    cut_revertidos: set[str] = set()
     for r in crudo:
         fdep = _coerce_date(
             r.get("Fecha_deposito") or r.get("Fecha_estimada_deposito") or r.get("Fecha_hasta")
@@ -1705,23 +1736,43 @@ def api_conciliar_rendiciones(request: Request, dias: int = 30):
                 por_numop.setdefault(op, fdep)
             if cut and cut.isdigit():
                 por_cut.setdefault(cut, fdep)
+        for d in _iter_detalles(r.get("Contracargos")):
+            cut = str(d.get("Codigo_unico_transaccion") or "").strip()
+            if cut:
+                cut_revertidos.add(cut)
+        for d in _iter_detalles(r.get("Devoluciones")):
+            cut = str(d.get("Codigo_unico_transaccion") or "").strip()
+            if cut:
+                cut_revertidos.add(cut)
 
-    print(f"[conciliar] rendiciones={len(crudo)} ops_numop={len(por_numop)} ops_cut={len(por_cut)}", flush=True)
+    print(f"[conciliar] rendiciones={len(crudo)} ops_numop={len(por_numop)} "
+          f"ops_cut={len(por_cut)} revertidos={len(cut_revertidos)}", flush=True)
     if por_numop:
         print(f"[conciliar] muestra numero_operacion ePagos: {list(por_numop)[:3]}", flush=True)
 
-    if not por_numop and not por_cut:
+    if not por_numop and not por_cut and not cut_revertidos:
         return {
             "actualizados": 0,
             "cobradas_epagos": 0,
+            "contracargos": 0,
             "rendiciones": len(crudo),
             "mensaje": "Las rendiciones del período no traen operaciones para conciliar",
         }
 
     actualizados = 0
+    revertidos = 0
     with get_session() as db:
-        cobros = db.query(Cobro).filter(Cobro.estado != "acreditado").all()
+        cobros = db.query(Cobro).all()
         for c in cobros:
+            # Un contracargo/devolución pisa cualquier otro estado: esa plata
+            # se cobró y después se revirtió, así que el cobro NO quedó firme.
+            if c.id_transaccion and str(c.id_transaccion) in cut_revertidos:
+                if c.estado != "devuelto":
+                    c.estado = "devuelto"
+                    revertidos += 1
+                continue
+            if c.estado == "acreditado":
+                continue
             fdep = None
             matched = False
             if c.numero_operacion and c.numero_operacion in por_numop:
@@ -1737,9 +1788,10 @@ def api_conciliar_rendiciones(request: Request, dias: int = 30):
                 actualizados += 1
         db.commit()
 
-    print(f"[conciliar] FIN actualizados={actualizados}", flush=True)
+    print(f"[conciliar] FIN actualizados={actualizados} revertidos={revertidos}", flush=True)
     return {
         "actualizados":    actualizados,
+        "contracargos":    revertidos,
         "cobradas_epagos": len(por_numop) + len(por_cut),
         "rendiciones":     len(crudo),
     }

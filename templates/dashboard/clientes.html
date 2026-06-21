@@ -161,6 +161,44 @@
     </div>
   </div>
 
+  <!-- Filtros por estado de cobro -->
+  <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+    <span class="text-muted small me-1">Filtrar:</span>
+    <button class="btn btn-sm" :class="filtroEstado === 'todos' ? 'btn-dark' : 'btn-outline-dark'"
+            @click="filtroEstado = 'todos'">
+      Todos <span class="badge bg-light text-dark ms-1" x-text="conteo.todos"></span>
+    </button>
+    <button class="btn btn-sm" :class="filtroEstado === 'acreditado' ? 'btn-success' : 'btn-outline-success'"
+            @click="filtroEstado = 'acreditado'">
+      <i class="bi bi-check-circle me-1"></i>Cobrados <span class="badge bg-light text-dark ms-1" x-text="conteo.acreditado"></span>
+    </button>
+    <button class="btn btn-sm" :class="filtroEstado === 'contracargo' ? 'btn-danger' : 'btn-outline-danger'"
+            @click="filtroEstado = 'contracargo'">
+      <i class="bi bi-exclamation-triangle me-1"></i>Contracargos <span class="badge bg-light text-dark ms-1" x-text="conteo.contracargo"></span>
+    </button>
+    <button class="btn btn-sm" :class="filtroEstado === 'sin_cobro' ? 'btn-secondary' : 'btn-outline-secondary'"
+            @click="filtroEstado = 'sin_cobro'">
+      <i class="bi bi-dash-circle me-1"></i>Sin cobro <span class="badge bg-light text-dark ms-1" x-text="conteo.sin_cobro"></span>
+    </button>
+    <button class="btn btn-sm" :class="filtroEstado === 'pendiente' ? 'btn-warning' : 'btn-outline-warning'"
+            @click="filtroEstado = 'pendiente'">
+      <i class="bi bi-hourglass-split me-1"></i>Pendientes <span class="badge bg-light text-dark ms-1" x-text="conteo.pendiente"></span>
+    </button>
+
+    <!-- Acción masiva sobre el filtro de contracargos -->
+    <button class="btn btn-sm btn-danger ms-auto"
+            x-show="filtroEstado === 'contracargo' && clientesFiltrados.length > 0"
+            @click="eliminarContracargos()"
+            :disabled="eliminandoMasivo">
+      <span x-show="!eliminandoMasivo">
+        <i class="bi bi-trash3 me-1"></i>Eliminar los <span x-text="clientesFiltrados.length"></span> con contracargo
+      </span>
+      <span x-show="eliminandoMasivo">
+        <span class="spinner-border spinner-sm me-1"></span>Eliminando…
+      </span>
+    </button>
+  </div>
+
   <!-- Estado de carga / error -->
   <template x-if="cargando && clientes.length === 0">
     <div class="text-center py-5">
@@ -185,6 +223,7 @@
               <th>DNI</th>
               <th>ID ePagos</th>
               <th class="text-center">CBU</th>
+              <th class="text-center">Estado cobro</th>
               <th class="text-end">Acreditado</th>
               <th></th>
             </tr>
@@ -192,7 +231,7 @@
           <tbody>
             <template x-if="clientesFiltrados.length === 0">
               <tr>
-                <td colspan="7" class="text-center text-muted py-5">
+                <td colspan="8" class="text-center text-muted py-5">
                   <template x-if="busqueda">
                     <span>No hay resultados para "<strong x-text="busqueda"></strong>"</span>
                   </template>
@@ -214,6 +253,10 @@
                 <td class="font-monospace small text-muted" x-text="cl.identificador_cliente"></td>
                 <td class="text-center">
                   <span class="badge bg-primary rounded-pill" x-text="cl.num_cuentas"></span>
+                </td>
+                <td class="text-center">
+                  <span class="badge" :class="badgeEstado(cl.estado_cobro).clase"
+                        x-text="badgeEstado(cl.estado_cobro).label"></span>
                 </td>
                 <td class="text-end fw-semibold small">
                   $ <span x-text="fmtMonto(cl.total_cobrado)"></span>
@@ -248,6 +291,8 @@ function clientesApp() {
   return {
     clientes: [],
     busqueda: '',
+    filtroEstado: 'todos',
+    eliminandoMasivo: false,
     cargando: false,
     error: null,
     mostrarFormulario: false,
@@ -321,13 +366,62 @@ function clientesApp() {
 
     get clientesFiltrados() {
       const q = this.busqueda.toLowerCase().trim();
-      if (!q) return this.clientes;
-      return this.clientes.filter(cl =>
+      let lista = this.clientes;
+      if (this.filtroEstado !== 'todos') {
+        lista = lista.filter(cl => cl.estado_cobro === this.filtroEstado);
+      }
+      if (!q) return lista;
+      return lista.filter(cl =>
         (cl.nombre + ' ' + cl.apellido).toLowerCase().includes(q) ||
         (cl.email || '').toLowerCase().includes(q) ||
         cl.identificador_cliente.toLowerCase().includes(q) ||
         String(cl.dni || '').includes(q)
       );
+    },
+
+    get conteo() {
+      const c = { todos: this.clientes.length, acreditado: 0, contracargo: 0, sin_cobro: 0, pendiente: 0 };
+      for (const cl of this.clientes) {
+        if (c[cl.estado_cobro] !== undefined) c[cl.estado_cobro]++;
+      }
+      return c;
+    },
+
+    badgeEstado(estado) {
+      switch (estado) {
+        case 'acreditado':  return { clase: 'text-bg-success',   label: 'Cobrado' };
+        case 'contracargo': return { clase: 'text-bg-danger',    label: 'Contracargo' };
+        case 'pendiente':   return { clase: 'text-bg-warning',   label: 'Pendiente' };
+        default:            return { clase: 'text-bg-secondary', label: 'Sin cobro' };
+      }
+    },
+
+    async eliminarContracargos() {
+      const lista = this.clientesFiltrados.slice();
+      if (lista.length === 0) return;
+      if (!confirm(`¿Eliminar definitivamente ${lista.length} cliente(s) que hicieron contracargo? ` +
+                   `Esta acción borra el cliente y todos sus datos.`)) return;
+      this.eliminandoMasivo = true;
+      let ok = 0, fallidos = 0;
+      try {
+        for (const cl of lista) {
+          try {
+            const res = await fetch('/api/clientes/' + cl.id, { method: 'DELETE' });
+            if (res.ok) {
+              this.clientes = this.clientes.filter(c => c.id !== cl.id);
+              ok++;
+            } else {
+              fallidos++;
+            }
+          } catch (e) {
+            fallidos++;
+          }
+        }
+        showToast(`✅ ${ok} cliente(s) eliminados${fallidos ? ' · ⚠️ ' + fallidos + ' con error' : ''}`,
+                  fallidos ? 'error' : 'success');
+      } finally {
+        this.eliminandoMasivo = false;
+      }
     },
 
     autoIdCliente() {
