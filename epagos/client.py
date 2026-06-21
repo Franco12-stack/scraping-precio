@@ -162,8 +162,22 @@ class EpagosClient:
             "Fecha_desde": fecha_desde.strftime("%Y-%m-%d"),
             "Fecha_hasta": fecha_hasta.strftime("%Y-%m-%d"),
         }
-        resp = self._soap.service.obtener_rendiciones(API_VERSION, self._creds_pago(), criterios)
-        self._validar(resp.id_resp, resp.respuesta)
+
+        def _llamar():
+            return self._soap.service.obtener_rendiciones(
+                API_VERSION, self._creds_pago(), criterios
+            )
+
+        resp = _llamar()
+        try:
+            self._validar(resp.id_resp, resp.respuesta)
+        except EpagosError as e:
+            if "02003" in str(e.id_resp) or "token" in str(e.mensaje).lower():
+                self._token = None
+                resp = _llamar()
+                self._validar(resp.id_resp, resp.respuesta)
+            else:
+                raise
         return [self._to_dict(r) for r in (resp.rendicion or [])]
 
     # ------------------------------------------------------------------

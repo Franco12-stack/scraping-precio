@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Rendiciones — ePagos{% endblock %}
+
+{% block content %}
+<div x-data="rendicionesApp()" x-init="cargar()" x-cloak>
+
+  <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <h4 class="fw-bold mb-0"><i class="bi bi-cash-stack me-2"></i>Rendiciones</h4>
+    <div class="d-flex gap-2 align-items-center">
+      <select class="form-select form-select-sm" style="width:auto" x-model.number="dias" @change="cargar()">
+        <option value="30">Últimos 30 días</option>
+        <option value="90">Últimos 90 días</option>
+        <option value="180">Últimos 180 días</option>
+        <option value="365">Último año</option>
+      </select>
+      <button class="btn btn-sm btn-outline-secondary" @click="cargar()" :disabled="cargando">
+        <span x-show="!cargando"><i class="bi bi-arrow-repeat me-1"></i>Actualizar</span>
+        <span x-show="cargando"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ePagos…</span>
+      </button>
+    </div>
+  </div>
+
+  <p class="text-muted small">
+    Las rendiciones son las liquidaciones que ePagos te deposita: agrupan los cobros percibidos
+    por período e indican cuándo (y cuánto) se acredita en tu cuenta.
+  </p>
+
+  <!-- Totales -->
+  <div class="row g-3 mb-3" x-show="!cargando">
+    <div class="col-md-4">
+      <div class="card shadow-sm border-0">
+        <div class="card-body py-3">
+          <div class="text-muted small">Total percibido</div>
+          <div class="fs-4 fw-bold text-success" x-text="fmtMoneda(totalPercibido)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card shadow-sm border-0">
+        <div class="card-body py-3">
+          <div class="text-muted small">Total depositado</div>
+          <div class="fs-4 fw-bold" x-text="fmtMoneda(totalDepositado)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card shadow-sm border-0">
+        <div class="card-body py-3">
+          <div class="text-muted small">Rendiciones</div>
+          <div class="fs-4 fw-bold" x-text="rendiciones.length"></div>
+          <div class="text-muted small" x-text="`${desde} → ${hasta}`"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabla -->
+  <div class="card shadow-sm border-0">
+    <div class="card-body">
+
+      <div class="text-center py-5" x-show="cargando">
+        <span class="spinner-border text-primary"></span>
+        <div class="text-muted mt-2">Consultando rendiciones en ePagos…</div>
+      </div>
+
+      <div class="alert alert-danger" x-show="error" x-text="error"></div>
+
+      <div class="text-muted text-center py-4" x-show="!cargando && !error && rendiciones.length === 0">
+        No hay rendiciones en el período seleccionado.
+      </div>
+
+      <div class="table-responsive" x-show="!cargando && rendiciones.length > 0">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>N°</th>
+              <th>Convenio</th>
+              <th>Sec.</th>
+              <th>Estado</th>
+              <th class="text-end">Monto percibido</th>
+              <th class="text-end">Depositado</th>
+              <th>Período</th>
+              <th>Fecha est. depósito</th>
+              <th>Fecha depósito</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in rendiciones" :key="r.numero">
+              <tr>
+                <td class="font-monospace small" x-text="r.numero"></td>
+                <td class="font-monospace small" x-text="r.convenio"></td>
+                <td class="small" x-text="r.secuencia"></td>
+                <td>
+                  <span class="badge"
+                        :class="badgeEstado(r.estado)"
+                        x-text="r.estado"></span>
+                </td>
+                <td class="text-end fw-semibold" x-text="fmtMoneda(r.monto)"></td>
+                <td class="text-end" x-text="r.monto_depositado ? fmtMoneda(r.monto_depositado) : '—'"></td>
+                <td class="small text-muted" x-text="`${r.fecha_desde} → ${r.fecha_hasta}`"></td>
+                <td class="small" x-text="r.fecha_estimada_deposito || '—'"></td>
+                <td class="small" x-text="r.fecha_deposito || '(sin depositar)'"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+function rendicionesApp() {
+  return {
+    cargando: false,
+    error: '',
+    dias: 90,
+    rendiciones: [],
+    totalPercibido: 0,
+    totalDepositado: 0,
+    desde: '',
+    hasta: '',
+
+    async cargar() {
+      this.cargando = true;
+      this.error = '';
+      try {
+        const res  = await fetch(`/api/rendiciones?dias=${this.dias}`);
+        const data = await res.json();
+        if (!res.ok) { this.error = data.error || 'Error al consultar rendiciones'; return; }
+        this.rendiciones     = data.rendiciones;
+        this.totalPercibido  = data.total_percibido;
+        this.totalDepositado = data.total_depositado;
+        this.desde           = data.desde;
+        this.hasta           = data.hasta;
+      } catch (e) {
+        this.error = 'Error: ' + e.message;
+      } finally {
+        this.cargando = false;
+      }
+    },
+
+    fmtMoneda(n) {
+      return (n || 0).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+    },
+
+    badgeEstado(estado) {
+      const e = (estado || '').toLowerCase();
+      if (e.includes('deposit')) return 'text-bg-success';
+      if (e.includes('activ'))   return 'text-bg-warning';
+      return 'text-bg-secondary';
+    },
+  };
+}
+</script>
+{% endblock %}

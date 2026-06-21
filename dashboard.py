@@ -432,6 +432,74 @@ def historial_cobros(request: Request):
         })
 
 
+@router.get("/dashboard/rendiciones", response_class=HTMLResponse)
+def page_rendiciones(request: Request):
+    if not _get_current_user(request):
+        return _redirect_login()
+    return templates.TemplateResponse("dashboard/rendiciones.html", {"request": request})
+
+
+def _fecha_str(v) -> str:
+    """Convierte date/datetime/str de ePagos a 'YYYY-MM-DD' (o '' si no hay)."""
+    if not v:
+        return ""
+    if isinstance(v, (date, datetime)):
+        return v.strftime("%Y-%m-%d")
+    return str(v)[:10]
+
+
+@router.get("/api/rendiciones")
+def api_rendiciones(request: Request, dias: int = 90):
+    """Lista las rendiciones (liquidaciones) de ePagos de los últimos `dias`.
+    Devuelve solo los campos de resumen, sin el detalle por transacción."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    fecha_hasta = date.today()
+    fecha_desde = fecha_hasta - timedelta(days=max(1, min(dias, 365)))
+
+    ep = _epagos()
+    try:
+        crudo = ep.obtener_rendiciones(fecha_desde, fecha_hasta)
+    except EpagosError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"error": f"Error al consultar ePagos: {exc}"}, status_code=500)
+
+    rendiciones = []
+    for r in crudo:
+        rendiciones.append({
+            "numero":                  r.get("Numero"),
+            "secuencia":               r.get("Secuencia"),
+            "convenio":                r.get("Convenio"),
+            "estado":                  r.get("Estado"),
+            "fecha_desde":             _fecha_str(r.get("Fecha_desde")),
+            "fecha_hasta":             _fecha_str(r.get("Fecha_hasta")),
+            "fecha_estimada_deposito": _fecha_str(r.get("Fecha_estimada_deposito")),
+            "fecha_deposito":          _fecha_str(r.get("Fecha_deposito")),
+            "monto":                   float(r.get("Monto") or 0),
+            "monto_depositado":        float(r.get("Monto_depositado") or 0),
+            "monto_comision":          float(r.get("Monto_comision") or 0),
+            "cantidad":                r.get("Cantidad") or 0,
+        })
+
+    # Más recientes primero
+    rendiciones.sort(key=lambda x: (x["fecha_hasta"], x["numero"] or 0), reverse=True)
+
+    total_percibido  = sum(r["monto"] for r in rendiciones)
+    total_depositado = sum(r["monto_depositado"] for r in rendiciones)
+
+    return {
+        "rendiciones":      rendiciones,
+        "total":            len(rendiciones),
+        "total_percibido":  total_percibido,
+        "total_depositado": total_depositado,
+        "desde":            fecha_desde.strftime("%Y-%m-%d"),
+        "hasta":            fecha_hasta.strftime("%Y-%m-%d"),
+    }
+
+
 @router.post("/dashboard/cobros/nuevo")
 def nuevo_cobro(
     request: Request,
