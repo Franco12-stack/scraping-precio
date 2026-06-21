@@ -482,9 +482,9 @@ def _iter_detalles(det):
 
 
 @router.get("/api/rendiciones")
-def api_rendiciones(request: Request, dias: int = 90):
+def api_rendiciones(request: Request, dias: int = 30):
     """Lista las rendiciones (liquidaciones) de ePagos de los últimos `dias`.
-    Devuelve solo los campos de resumen, sin el detalle por transacción."""
+    Incluye los contracargos y devoluciones cruzados con el donante."""
     err = _api_require_auth(request)
     if err:
         return err
@@ -501,9 +501,12 @@ def api_rendiciones(request: Request, dias: int = 90):
         return JSONResponse({"error": f"Error al consultar ePagos: {exc}"}, status_code=500)
 
     rendiciones = []
+    # (codigo_unico_transaccion, monto, numero_rendicion, tipo)
+    movimientos_raw: list[tuple] = []
     for r in crudo:
+        numrend = r.get("Numero")
         rendiciones.append({
-            "numero":                  r.get("Numero"),
+            "numero":                  numrend,
             "secuencia":               r.get("Secuencia"),
             "convenio":                r.get("Convenio"),
             "estado":                  r.get("Estado"),
@@ -516,20 +519,60 @@ def api_rendiciones(request: Request, dias: int = 90):
             "monto_comision":          float(r.get("Monto_comision") or 0),
             "cantidad":                r.get("Cantidad") or 0,
         })
+        for d in _iter_detalles(r.get("Contracargos")):
+            cut = str(d.get("Codigo_unico_transaccion") or "").strip()
+            movimientos_raw.append((cut, float(d.get("Monto") or 0), numrend, "contracargo"))
+        for d in _iter_detalles(r.get("Devoluciones")):
+            cut = str(d.get("Codigo_unico_transaccion") or "").strip()
+            movimientos_raw.append((cut, float(d.get("Monto") or 0), numrend, "devolucion"))
 
     # Más recientes primero
     rendiciones.sort(key=lambda x: (x["fecha_hasta"], x["numero"] or 0), reverse=True)
 
+    # Cruzar contracargos/devoluciones con el donante (por id_transaccion)
+    contracargos = []
+    if movimientos_raw:
+        cuts = {m[0] for m in movimientos_raw if m[0]}
+        info = {}
+        with get_session() as db:
+            filas = (
+                db.query(Cobro.id_transaccion, Cobro.numero_operacion,
+                         Cliente.nombre, Cliente.apellido, Cliente.cuit)
+                .join(Cliente)
+                .filter(Cobro.id_transaccion.in_(list(cuts)))
+                .all()
+            )
+            for f in filas:
+                info[str(f.id_transaccion)] = {
+                    "cliente":          f"{f.nombre} {f.apellido}",
+                    "cuit":             f.cuit,
+                    "numero_operacion": f.numero_operacion,
+                }
+        for cut, monto, numrend, tipo in movimientos_raw:
+            det = info.get(cut, {})
+            contracargos.append({
+                "tipo":             tipo,
+                "id_transaccion":   cut,
+                "monto":            monto,
+                "numero_rendicion": numrend,
+                "cliente":          det.get("cliente", "(no encontrado en la base)"),
+                "cuit":             det.get("cuit"),
+                "numero_operacion": det.get("numero_operacion"),
+            })
+
     total_percibido  = sum(r["monto"] for r in rendiciones)
     total_depositado = sum(r["monto_depositado"] for r in rendiciones)
+    total_contracargos = sum(c["monto"] for c in contracargos)
 
     return {
-        "rendiciones":      rendiciones,
-        "total":            len(rendiciones),
-        "total_percibido":  total_percibido,
-        "total_depositado": total_depositado,
-        "desde":            fecha_desde.strftime("%Y-%m-%d"),
-        "hasta":            fecha_hasta.strftime("%Y-%m-%d"),
+        "rendiciones":        rendiciones,
+        "total":              len(rendiciones),
+        "total_percibido":    total_percibido,
+        "total_depositado":   total_depositado,
+        "contracargos":       contracargos,
+        "total_contracargos": total_contracargos,
+        "desde":              fecha_desde.strftime("%Y-%m-%d"),
+        "hasta":              fecha_hasta.strftime("%Y-%m-%d"),
     }
 
 

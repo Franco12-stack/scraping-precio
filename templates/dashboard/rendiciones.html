@@ -27,7 +27,7 @@
 
   <!-- Totales -->
   <div class="row g-3 mb-3" x-show="!cargando">
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="card shadow-sm border-0">
         <div class="card-body py-3">
           <div class="text-muted small">Total percibido</div>
@@ -35,7 +35,7 @@
         </div>
       </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="card shadow-sm border-0">
         <div class="card-body py-3">
           <div class="text-muted small">Total depositado</div>
@@ -43,13 +43,70 @@
         </div>
       </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
+      <div class="card shadow-sm border-0"
+           :class="contracargos.length > 0 ? 'border-danger border' : ''">
+        <div class="card-body py-3">
+          <div class="text-muted small">Contracargos / devoluciones</div>
+          <div class="fs-4 fw-bold" :class="contracargos.length > 0 ? 'text-danger' : ''"
+               x-text="contracargos.length"></div>
+          <div class="text-muted small" x-show="contracargos.length > 0"
+               x-text="fmtMoneda(totalContracargos)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
       <div class="card shadow-sm border-0">
         <div class="card-body py-3">
           <div class="text-muted small">Rendiciones</div>
           <div class="fs-4 fw-bold" x-text="rendiciones.length"></div>
           <div class="text-muted small" x-text="`${desde} → ${hasta}`"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contracargos y devoluciones -->
+  <div class="card shadow-sm border-0 mb-3" x-show="!cargando && contracargos.length > 0">
+    <div class="card-body">
+      <h6 class="fw-bold text-danger mb-3">
+        <i class="bi bi-exclamation-triangle me-2"></i>Contracargos y devoluciones
+      </h6>
+      <p class="text-muted small">
+        Cobros que se percibieron pero luego se revirtieron (el donante desconoció el cargo
+        o se devolvió). Esa plata se descuenta de lo depositado.
+      </p>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Tipo</th>
+              <th>Cliente</th>
+              <th>CUIT</th>
+              <th>N° Operación</th>
+              <th>Transacción</th>
+              <th class="text-end">Monto</th>
+              <th>Rendición</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="c in contracargos" :key="c.id_transaccion + '-' + c.tipo">
+              <tr>
+                <td>
+                  <span class="badge"
+                        :class="c.tipo === 'contracargo' ? 'text-bg-danger' : 'text-bg-warning'"
+                        x-text="c.tipo"></span>
+                </td>
+                <td x-text="c.cliente"></td>
+                <td class="small font-monospace" x-text="c.cuit || '—'"></td>
+                <td class="small font-monospace" x-text="c.numero_operacion || '—'"></td>
+                <td class="small font-monospace" x-text="c.id_transaccion"></td>
+                <td class="text-end fw-semibold" x-text="fmtMoneda(c.monto)"></td>
+                <td class="small" x-text="c.numero_rendicion"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -118,8 +175,10 @@ function rendicionesApp() {
     error: '',
     dias: 30,
     rendiciones: [],
+    contracargos: [],
     totalPercibido: 0,
     totalDepositado: 0,
+    totalContracargos: 0,
     desde: '',
     hasta: '',
 
@@ -130,11 +189,13 @@ function rendicionesApp() {
         const res  = await fetch(`/api/rendiciones?dias=${this.dias}`);
         const data = await res.json();
         if (!res.ok) { this.error = data.error || 'Error al consultar rendiciones'; return; }
-        this.rendiciones     = data.rendiciones;
-        this.totalPercibido  = data.total_percibido;
-        this.totalDepositado = data.total_depositado;
-        this.desde           = data.desde;
-        this.hasta           = data.hasta;
+        this.rendiciones       = data.rendiciones;
+        this.contracargos      = data.contracargos || [];
+        this.totalPercibido    = data.total_percibido;
+        this.totalDepositado   = data.total_depositado;
+        this.totalContracargos = data.total_contracargos || 0;
+        this.desde             = data.desde;
+        this.hasta             = data.hasta;
       } catch (e) {
         this.error = 'Error: ' + e.message;
       } finally {
