@@ -241,7 +241,7 @@
                 </td>
               </tr>
             </template>
-            <template x-for="cl in clientesFiltrados" :key="cl.id">
+            <template x-for="cl in clientesPagina" :key="cl.id">
               <tr>
                 <td>
                   <a :href="'/dashboard/clientes/' + cl.id" class="fw-semibold text-decoration-none">
@@ -279,6 +279,26 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Paginación -->
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 p-3 border-top"
+           x-show="totalPaginas > 1">
+        <span class="text-muted small">
+          Mostrando
+          <strong x-text="(pagina - 1) * porPagina + 1"></strong>–<strong
+            x-text="Math.min(pagina * porPagina, clientesFiltrados.length)"></strong>
+          de <strong x-text="clientesFiltrados.length"></strong>
+        </span>
+        <div class="btn-group">
+          <button class="btn btn-sm btn-outline-secondary" @click="pagina = 1" :disabled="pagina === 1">«</button>
+          <button class="btn btn-sm btn-outline-secondary" @click="pagina--" :disabled="pagina === 1">‹</button>
+          <span class="btn btn-sm btn-light disabled">
+            Página <span x-text="pagina"></span> / <span x-text="totalPaginas"></span>
+          </span>
+          <button class="btn btn-sm btn-outline-secondary" @click="pagina++" :disabled="pagina === totalPaginas">›</button>
+          <button class="btn btn-sm btn-outline-secondary" @click="pagina = totalPaginas" :disabled="pagina === totalPaginas">»</button>
+        </div>
+      </div>
     </div>
   </template>
 
@@ -292,6 +312,8 @@ function clientesApp() {
     clientes: [],
     busqueda: '',
     filtroEstado: 'todos',
+    pagina: 1,
+    porPagina: 50,
     eliminandoMasivo: false,
     cargando: false,
     error: null,
@@ -317,6 +339,9 @@ function clientesApp() {
     },
 
     async init() {
+      // Al cambiar el filtro o la búsqueda, volver a la primera página
+      this.$watch('busqueda',     () => { this.pagina = 1; });
+      this.$watch('filtroEstado', () => { this.pagina = 1; });
       await this.cargar();
       await this.cargarPendientes();
     },
@@ -377,6 +402,17 @@ function clientesApp() {
         cl.identificador_cliente.toLowerCase().includes(q) ||
         String(cl.dni || '').includes(q)
       );
+    },
+
+    get totalPaginas() {
+      return Math.max(1, Math.ceil(this.clientesFiltrados.length / this.porPagina));
+    },
+
+    // Solo renderiza la página actual (evita pintar miles de filas de golpe)
+    get clientesPagina() {
+      const p = Math.min(Math.max(1, this.pagina), this.totalPaginas);
+      const inicio = (p - 1) * this.porPagina;
+      return this.clientesFiltrados.slice(inicio, inicio + this.porPagina);
     },
 
     get conteo() {
