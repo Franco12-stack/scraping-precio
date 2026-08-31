@@ -153,7 +153,10 @@ class EpagosClient:
             "FechaNovedadAcreditacionHasta": fecha_hasta.strftime("%Y-%m-%d"),
             "pagina":                        pagina,
         }
+        print(f"[obtener_pagos] criterios enviados: {criterios}", flush=True)
         resp = self._soap.service.obtener_pagos(API_VERSION, self._creds_pago(), criterios)
+        print(f"[obtener_pagos] respuesta cruda — id_resp={resp.id_resp!r} "
+              f"respuesta={resp.respuesta!r} cantidad_pago={len(resp.pago or [])}", flush=True)
         self._validar(resp.id_resp, resp.respuesta)
         return [self._to_dict(p) for p in (resp.pago or [])]
 
