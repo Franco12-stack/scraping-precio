@@ -6,6 +6,7 @@ import io
 import json
 import os
 import secrets
+import threading
 import uuid
 from calendar import month_abbr
 from datetime import date, datetime, timedelta
@@ -35,6 +36,14 @@ _ADMIN_PASS = os.getenv("DASHBOARD_PASSWORD", "admin")
 _WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 _signer = URLSafeTimedSerializer(_SECRET)
 _SESSION_MAX_AGE = 60 * 60 * 8  # 8 horas
+
+# Jobs de cobros masivos en memoria: el proceso corre en un hilo del propio
+# servidor y sobrevive aunque el navegador cierre la pestaña o pierda la
+# conexión. El frontend consulta el progreso por polling en vez de mantener
+# una conexión SSE abierta durante horas.
+_COBROS_JOBS: dict[str, dict] = {}
+_COBROS_JOBS_LOCK = threading.Lock()
+_COBROS_JOBS_MAX = 20  # cuántos jobs terminados se conservan como máximo
 
 
 # ---------------------------------------------------------------------------
@@ -225,135 +234,6 @@ def crear_cliente(
         db.commit()
     return RedirectResponse("/dashboard/clientes", status_code=302)
 
-
-@router.post("/dashboard/clientes/importar")
-def importar_clientes(
-    request: Request,
-    archivo: UploadFile = File(...),
-):
-    if not _get_current_user(request):
-        return _redirect_login()
-
-    import openpyxl
-
-    def _parsear_nombre(titular: str):
-        titular = str(titular).strip()
-        if "," in titular:
-            partes = titular.split(",", 1)
-            return partes[1].strip(), partes[0].strip()
-        partes = titular.split()
-        if len(partes) == 1:
-            return "-", partes[0]
-        return partes[0], " ".join(partes[1:])
-
-    def _limpiar_cuit(val) -> Optional[int]:
-        try:
-            return int(str(val).replace("-", "").replace(".", "").strip())
-        except Exception:
-            return None
-
-    def _dni_desde_cuit(cuit: int) -> Optional[int]:
-        try:
-            s = str(cuit)
-            if len(s) == 11:
-                return int(s[2:10])
-        except Exception:
-            pass
-        return None
-
-    contenido = archivo.file.read()
-    wb = openpyxl.load_workbook(io.BytesIO(contenido), data_only=True)
-    ws = wb.active
-
-    creados = 0
-    omitidos = 0
-    epagos_ok = 0
-    epagos_error = 0
-    errores = []
-    duplicados = []
-
-    ep = _epagos()
-
-    with get_session() as db:
-        for i, fila in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-            if not fila or not fila[0]:
-                continue
-            titular = fila[0]
-            cuit_raw = fila[1]
-            cbu_raw = fila[2]
-            banco = fila[3] if len(fila) > 3 else None
-
-            cuit = _limpiar_cuit(cuit_raw)
-            if not cuit:
-                errores.append(f"Fila {i}: CUIT inválido ({cuit_raw})")
-                continue
-
-            cbu = str(cbu_raw).strip() if cbu_raw else None
-
-            # Identificamos al cliente por CUIT (no por identificador_cliente):
-            # puede haber clientes creados por otras vías con un identificador
-            # distinto pero el mismo CUIT, y esos también son duplicados.
-            existente = db.query(Cliente).filter(Cliente.cuit == cuit).first()
-            if existente:
-                omitidos += 1
-                duplicados.append({
-                    "fila":   i,
-                    "titular": str(titular),
-                    "cuit":   cuit,
-                    "motivo": f"CUIT ya registrado (cliente existente: "
-                              f"{existente.apellido}, {existente.nombre})",
-                })
-                continue
-
-            identificador = f"CLI-{cuit}"
-
-            nombre, apellido = _parsear_nombre(titular)
-            dni = _dni_desde_cuit(cuit)
-
-            cliente = Cliente(
-                identificador_cliente=identificador,
-                nombre=nombre,
-                apellido=apellido,
-                email="",
-                dni=dni,
-                cuit=cuit,
-            )
-            db.add(cliente)
-            db.flush()
-
-            if cbu:
-                id_cuenta = cbu
-                try:
-                    res = ep.registrar_cuenta_cliente(
-                        identificador_cliente=identificador,
-                        cbu=cbu,
-                        cuit=cuit,
-                    )
-                    id_cuenta = res.get("identificador_cuenta") or cbu
-                    epagos_ok += 1
-                except Exception as e:
-                    epagos_error += 1
-                    errores.append(f"Fila {i} ({titular}): ePagos — {e}")
-
-                db.add(Cuenta(
-                    cliente_id=cliente.id,
-                    identificador_cuenta=id_cuenta,
-                    alias=str(banco).strip() if banco else None,
-                    cbu=cbu,
-                ))
-
-            creados += 1
-
-        db.commit()
-
-    return JSONResponse({
-        "creados": creados,
-        "omitidos": omitidos,
-        "duplicados": duplicados,
-        "epagos_ok": epagos_ok,
-        "epagos_error": epagos_error,
-        "errores": errores,
-    })
 
 
 @router.get("/dashboard/clientes/{cliente_id}", response_class=HTMLResponse)
@@ -1477,6 +1357,24 @@ async def api_cobros_masivo(request: Request):
             numero_op = f"OP-{uuid.uuid4().hex[:12].upper()}"
             result_row["numero_operacion"] = numero_op
 
+            # Verificar si ya existe un cobro no-error para esta cuenta hoy (evitar duplicados)
+            try:
+                with get_session() as db:
+                    ya_existe = db.query(Cobro).filter(
+                        Cobro.cuenta_id == int(cuenta_id),
+                        func.date(Cobro.creado_en) == date.today(),
+                        Cobro.estado != "error",
+                    ).first()
+                if ya_existe:
+                    result_row["estado"] = "omitido"
+                    result_row["error"] = f"Ya procesado hoy (cobro #{ya_existe.id})"
+                    exitosos += 1
+                    yield _sse({"type": "progress", "idx": idx, "total": total_items,
+                                "exitosos": exitosos, "fallidos": fallidos, "result": result_row})
+                    continue
+            except Exception:
+                pass  # si falla el check, intentar igual
+
             # Crear cobro en DB estado "enviado" (sesión corta)
             cobro_id = None
             try:
@@ -1559,6 +1457,271 @@ async def api_cobros_masivo(request: Request):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _procesar_lote_cobros_job(job_id: str, descripcion: str, tipo: str,
+                               fecha_cobro: Optional[str], fecha_debito: Optional[str],
+                               items: list) -> None:
+    """Procesa un lote de cobros en un hilo de background. El progreso se
+    guarda en _COBROS_JOBS[job_id] para que el frontend lo consulte por
+    polling — el proceso no depende de que el navegador mantenga una
+    conexión abierta durante horas."""
+    total_items = len(items)
+    exitosos = 0
+    fallidos = 0
+    resultados_error: list = []
+    ep = _epagos()
+
+    def _actualizar(idx):
+        with _COBROS_JOBS_LOCK:
+            job = _COBROS_JOBS.get(job_id)
+            if job is None:
+                return
+            job["idx"] = idx
+            job["exitosos"] = exitosos
+            job["fallidos"] = fallidos
+            job["resultados"] = resultados_error[-200:]
+
+    # Cuentas que ya tienen un cobro no-fallido creado hoy. Se consulta UNA
+    # sola vez y se guarda en memoria: hacer esta consulta por cada cliente
+    # obliga a SQLite a recorrer la tabla entera de cobros en cada vuelta, y
+    # con decenas de miles de filas el lote se vuelve cada vez más lento.
+    hoy = date.today()
+    cuentas_cobradas_hoy: set = set()
+    try:
+        with get_session() as db:
+            filas = (
+                db.query(Cobro.cuenta_id)
+                .filter(
+                    Cobro.creado_en >= datetime.combine(hoy, datetime.min.time()),
+                    Cobro.estado != "error",
+                )
+                .all()
+            )
+            cuentas_cobradas_hoy = {f.cuenta_id for f in filas if f.cuenta_id is not None}
+        print(f"[cobros_masivo {job_id[:8]}] {len(cuentas_cobradas_hoy)} cuentas ya cobradas hoy (se omitirán)", flush=True)
+    except Exception as exc:
+        print(f"[cobros_masivo {job_id[:8]}] no se pudieron precargar los cobros de hoy: {exc}", flush=True)
+
+    for idx, item in enumerate(items, 1):
+        cliente_id = item.get("cliente_id")
+        cuenta_id  = item.get("cuenta_id")
+        importe    = item.get("importe")
+        result_row = {
+            "cliente_id": cliente_id, "cliente_nombre": "—",
+            "estado": "error", "numero_operacion": None,
+            "importe": importe, "error": None,
+        }
+
+        if not all([cliente_id, cuenta_id, importe]):
+            result_row["error"] = "Faltan datos"
+            fallidos += 1
+            resultados_error.append(result_row)
+            _actualizar(idx)
+            continue
+
+        id_cliente = id_cuenta = nombre = apellido = email = dni = cuit = cbu = None
+        try:
+            with get_session() as db:
+                cliente = db.get(Cliente, int(cliente_id))
+                cuenta  = db.get(Cuenta,  int(cuenta_id))
+                if not cliente or not cuenta:
+                    result_row["error"] = "Cliente o cuenta no encontrados"
+                    fallidos += 1
+                    resultados_error.append(result_row)
+                    _actualizar(idx)
+                    continue
+
+                id_cliente = cliente.identificador_cliente
+                nombre     = cliente.nombre
+                apellido   = cliente.apellido
+                email      = cliente.email
+                dni        = cliente.dni
+                cuit       = cliente.cuit
+                id_cuenta  = cuenta.identificador_cuenta or ""
+                cbu        = cuenta.cbu
+
+                _id = id_cuenta
+                _necesita_registro = cbu and (
+                    _id == cbu
+                    or _id.startswith("CBU-")
+                    or (len(_id) == 22 and _id.isdigit())
+                )
+                if _necesita_registro:
+                    try:
+                        res_reg = ep.registrar_cuenta_cliente(
+                            identificador_cliente=id_cliente, cbu=cbu, cuit=cuit)
+                        nuevo_id = res_reg.get("identificador_cuenta")
+                        if nuevo_id:
+                            cuenta.identificador_cuenta = nuevo_id
+                            id_cuenta = nuevo_id
+                    except Exception:
+                        pass
+                db.commit()
+        except Exception as exc_db:
+            result_row["error"] = f"Error DB: {exc_db}"
+            fallidos += 1
+            resultados_error.append(result_row)
+            _actualizar(idx)
+            continue
+
+        result_row["cliente_nombre"] = f"{apellido}, {nombre}"
+        numero_op = f"OP-{uuid.uuid4().hex[:12].upper()}"
+        result_row["numero_operacion"] = numero_op
+
+        # Evitar duplicados: si esta cuenta ya tiene un cobro no-fallido de
+        # hoy, se omite. Así relanzar un lote que se cortó a la mitad no le
+        # cobra dos veces a nadie.
+        if int(cuenta_id) in cuentas_cobradas_hoy:
+            result_row["estado"] = "omitido"
+            result_row["error"] = "Ya procesado hoy"
+            exitosos += 1
+            _actualizar(idx)
+            continue
+
+        cobro_id = None
+        try:
+            with get_session() as db:
+                cobro = Cobro(
+                    cliente_id=int(cliente_id), cuenta_id=int(cuenta_id),
+                    numero_operacion=numero_op, importe=float(importe),
+                    descripcion=descripcion, tipo=tipo,
+                    fecha_cobro=date.fromisoformat(fecha_cobro) if fecha_cobro else None,
+                    estado="enviado",
+                )
+                db.add(cobro)
+                db.commit()
+                cobro_id = cobro.id
+        except Exception as exc_db:
+            result_row["error"] = f"Error DB cobro: {exc_db}"
+            fallidos += 1
+            resultados_error.append(result_row)
+            _actualizar(idx)
+            continue
+
+        id_transaccion = ""
+        estado_cobro   = "error"
+        error_msg      = None
+        try:
+            if tipo == "programado" and fecha_cobro:
+                res_sus = ep.solicitud_pago_recurrente_suscripcion(
+                    identificador_cliente=id_cliente, identificador_cuenta=id_cuenta,
+                    importe=float(importe), numero_operacion=numero_op,
+                    fecha_cobro=date.fromisoformat(fecha_cobro),
+                    nombre_pagador=nombre, apellido_pagador=apellido,
+                    email_pagador=email, dni_pagador=dni,
+                    cuit_pagador=cuit, descripcion=descripcion)
+                id_transaccion = str(res_sus.get("id_transaccion") or "")
+                estado_cobro = "programado"
+            else:
+                res = ep.solicitud_pago_recurrente(
+                    identificador_cliente=id_cliente, identificador_cuenta=id_cuenta,
+                    importe=float(importe), numero_operacion=numero_op,
+                    nombre_pagador=nombre, apellido_pagador=apellido,
+                    email_pagador=email, dni_pagador=dni,
+                    cuit_pagador=cuit, descripcion=descripcion,
+                    fecha_debito=date.fromisoformat(fecha_debito) if fecha_debito else None)
+                id_transaccion = str(res.get("id_transaccion", ""))
+                estado_cobro = "pendiente"
+            exitosos += 1
+            result_row["estado"] = estado_cobro
+            cuentas_cobradas_hoy.add(int(cuenta_id))
+            print(f"[cobros_masivo {job_id[:8]}] {idx}/{total_items} OK {apellido} ({id_cliente}) ${importe} → {numero_op}", flush=True)
+        except (EpagosError, Exception) as e:
+            estado_cobro = "error"
+            error_msg    = str(e)
+            result_row["estado"] = "error"
+            result_row["error"]  = error_msg
+            fallidos += 1
+            resultados_error.append(result_row)
+            print(f"[cobros_masivo {job_id[:8]}] {idx}/{total_items} FALLO {apellido} ({id_cliente}): {e}", flush=True)
+
+        if cobro_id:
+            try:
+                with get_session() as db:
+                    c = db.get(Cobro, cobro_id)
+                    if c:
+                        c.estado = estado_cobro
+                        c.id_transaccion = id_transaccion
+                        if error_msg:
+                            c.error = error_msg
+                        db.commit()
+            except Exception as exc_db:
+                print(f"[cobros_masivo {job_id[:8]}] {idx} error guardando estado: {exc_db}", flush=True)
+
+        _actualizar(idx)
+
+    print(f"[cobros_masivo {job_id[:8]}] FIN — total={total_items} exitosos={exitosos} fallidos={fallidos}", flush=True)
+    with _COBROS_JOBS_LOCK:
+        job = _COBROS_JOBS.get(job_id)
+        if job is not None:
+            job["idx"] = total_items
+            job["exitosos"] = exitosos
+            job["fallidos"] = fallidos
+            job["resultados"] = resultados_error[-200:]
+            job["done"] = True
+
+
+@router.post("/api/cobros/masivo_iniciar")
+async def api_cobros_masivo_iniciar(request: Request):
+    """Inicia un lote de cobros en un hilo de background y devuelve un job_id
+    para consultar el progreso con /api/cobros/masivo_estado. A diferencia del
+    endpoint SSE anterior, el proceso sigue corriendo en el servidor aunque el
+    navegador cierre la pestaña o se corte la conexión (proxy, red, etc.)."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+
+    data         = await request.json()
+    descripcion  = data.get("descripcion", "fundcolab")
+    tipo         = data.get("tipo", "inmediato")
+    fecha_cobro  = data.get("fecha_cobro")
+    fecha_debito = data.get("fecha_debito")
+    items        = data.get("cobros", [])
+
+    if not items:
+        return JSONResponse({"error": "No hay cobros para procesar"}, status_code=422)
+
+    total_items = len(items)
+    job_id = uuid.uuid4().hex
+
+    with _COBROS_JOBS_LOCK:
+        _COBROS_JOBS[job_id] = {
+            "idx": 0, "total": total_items,
+            "exitosos": 0, "fallidos": 0,
+            "resultados": [], "done": False,
+        }
+        if len(_COBROS_JOBS) > _COBROS_JOBS_MAX:
+            antiguos = [jid for jid, j in _COBROS_JOBS.items() if j["done"]]
+            for jid in antiguos[: len(_COBROS_JOBS) - _COBROS_JOBS_MAX]:
+                _COBROS_JOBS.pop(jid, None)
+
+    print(f"[cobros_masivo {job_id[:8]}] Iniciando lote de {total_items} cobros (background)", flush=True)
+
+    hilo = threading.Thread(
+        target=_procesar_lote_cobros_job,
+        args=(job_id, descripcion, tipo, fecha_cobro, fecha_debito, items),
+        daemon=True,
+    )
+    hilo.start()
+
+    return {"job_id": job_id, "total": total_items}
+
+
+@router.get("/api/cobros/masivo_estado")
+def api_cobros_masivo_estado(request: Request, job_id: str):
+    """Progreso de un lote de cobros iniciado con /api/cobros/masivo_iniciar."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+    with _COBROS_JOBS_LOCK:
+        job = _COBROS_JOBS.get(job_id)
+        if job is None:
+            return JSONResponse(
+                {"error": "Job no encontrado (¿se reinició el servidor mientras corría?)"},
+                status_code=404,
+            )
+        return dict(job)
 
 
 @router.get("/api/cobros/pendientes_reintento")

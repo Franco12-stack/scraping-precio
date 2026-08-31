@@ -3,3 +3,7 @@ __pycache__/
 resultados/
 .env
 epagos.db
+epagos.db*
+venv/
+*.bak-*
+actualizar_cobros.py

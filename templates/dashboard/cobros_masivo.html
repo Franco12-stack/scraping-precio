@@ -51,7 +51,7 @@
         <div class="col-md-2">
           <label class="form-label small fw-semibold">Fecha de débito</label>
           <input x-model="config.fecha_debito" type="date" class="form-control"
-                 :min="manana"
+                 :min="hoy"
                  x-show="config.tipo === 'inmediato'"
                  :title="'Fecha en que ePagos intentará el débito. Mínimo mañana (' + manana + ')'">
           <input x-model="config.fecha_cobro" type="date" class="form-control"
@@ -290,6 +290,7 @@ function masivosApp() {
     reintentando: false,
     exitosos: 0,
     fallidos: 0,
+    _pollTimer: null,
 
     init() {
       this.conCBU = [];
@@ -319,6 +320,23 @@ function masivosApp() {
         }
       });
       this.cargarFallidos();
+      this._retomarJobEnCurso();
+    },
+
+    // Si había un lote corriendo cuando se cerró/recargó la pestaña, lo
+    // retoma consultando el estado en vez de perder el progreso.
+    _retomarJobEnCurso() {
+      const guardado = localStorage.getItem('cobros_job_id');
+      if (!guardado) return;
+      let job;
+      try { job = JSON.parse(guardado); } catch (e) { localStorage.removeItem('cobros_job_id'); return; }
+      // Ignorar jobs guardados hace más de 24hs (por si quedó basura vieja)
+      if (!job.id || Date.now() - job.ts > 24 * 60 * 60 * 1000) {
+        localStorage.removeItem('cobros_job_id');
+        return;
+      }
+      this.ejecutando = true;
+      this._pollearJob(job.id);
     },
 
     async cargarFallidos() {
@@ -419,65 +437,65 @@ function masivosApp() {
           })),
         };
 
-        const res = await fetch('/api/cobros/masivo', {
+        const res = await fetch('/api/cobros/masivo_iniciar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
+        const data = await res.json();
 
-        const ct = res.headers.get('content-type') || '';
-        if (!ct.includes('text/event-stream')) {
-          // Fallback: respuesta de error antes de empezar a transmitir
-          const data = await res.json();
-          showToast(data.error || 'Error al procesar', 'error');
+        if (!res.ok || !data.job_id) {
+          showToast(data.error || 'Error al iniciar el lote', 'error');
+          this.ejecutando = false;
           return;
         }
 
-        // Leer stream SSE
-        const reader  = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer    = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          // Separar eventos SSE (terminan en \n\n)
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop(); // último fragmento puede estar incompleto
-
-          for (const part of parts) {
-            const line = part.trim();
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const ev = JSON.parse(line.slice(6));
-              if (ev.type === 'progress') {
-                this.progreso = ev.idx;
-                this.exitosos = ev.exitosos;
-                this.fallidos = ev.fallidos;
-                // Sólo agregar a tabla si es error
-                if (ev.result && ev.result.estado === 'error') {
-                  this.resultados.push(ev.result);
-                }
-              } else if (ev.type === 'done') {
-                this.progreso = ev.total;
-                this.exitosos = ev.exitosos;
-                this.fallidos = ev.fallidos;
-              }
-            } catch (_) {}
-          }
-        }
-
-        const msg = `✅ ${this.exitosos} cobro(s) enviados` +
-                    (this.fallidos ? ` · ⚠️ ${this.fallidos} fallido(s)` : '');
-        showToast(msg, this.fallidos > 0 ? 'warning' : 'success');
+        this.totalEnProceso = data.total;
+        localStorage.setItem('cobros_job_id', JSON.stringify({ id: data.job_id, ts: Date.now() }));
+        this._pollearJob(data.job_id);
       } catch (e) {
         showToast('Error de conexión: ' + e.message, 'error');
-      } finally {
         this.ejecutando = false;
-        this.cargarFallidos();
       }
+    },
+
+    // El lote corre en un hilo del servidor; acá sólo consultamos su
+    // progreso cada 1.5s. Si se cierra la pestaña o se corta la red, el
+    // proceso en el servidor sigue solo — al volver a entrar se retoma.
+    _pollearJob(jobId) {
+      if (this._pollTimer) clearInterval(this._pollTimer);
+      this._pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/cobros/masivo_estado?job_id=${encodeURIComponent(jobId)}`);
+          if (res.status === 404) {
+            // El servidor se reinició mientras corría el lote: no hay forma
+            // de recuperar el progreso, avisamos y limpiamos.
+            clearInterval(this._pollTimer);
+            localStorage.removeItem('cobros_job_id');
+            this.ejecutando = false;
+            showToast('Se perdió el progreso del lote (el servidor se reinició). Revisá "Reintentar cobros fallidos" y volvé a lanzar lo que falte.', 'warning');
+            this.cargarFallidos();
+            return;
+          }
+          const data = await res.json();
+          this.progreso   = data.idx;
+          this.exitosos    = data.exitosos;
+          this.fallidos    = data.fallidos;
+          this.resultados  = data.resultados || [];
+
+          if (data.done) {
+            clearInterval(this._pollTimer);
+            localStorage.removeItem('cobros_job_id');
+            this.ejecutando = false;
+            const msg = `✅ ${this.exitosos} cobro(s) enviados` +
+                        (this.fallidos ? ` · ⚠️ ${this.fallidos} fallido(s)` : '');
+            showToast(msg, this.fallidos > 0 ? 'warning' : 'success');
+            this.cargarFallidos();
+          }
+        } catch (e) {
+          // Error de red pasajero al consultar: se reintenta en el próximo tick
+        }
+      }, 1500);
     },
 
     fmtMonto(v) {
