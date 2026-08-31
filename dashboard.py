@@ -689,15 +689,35 @@ def api_listar_clientes(request: Request):
         for cid, estado in filas_estado:
             estados_por_cliente.setdefault(cid, set()).add(estado or "")
 
+        # Fecha del cobro acreditado más reciente por cliente, para distinguir
+        # "se le cobró recientemente" de "se le cobró una sola vez hace meses
+        # y desde entonces todo falló" (este último no debe figurar como
+        # "Cobrado" en verde).
+        VENTANA_ACTIVO_DIAS = 35  # algo más de un mes, para no penalizar el día del corte
+        limite_activo = datetime.now() - timedelta(days=VENTANA_ACTIVO_DIAS)
+        ultimo_acreditado_en: dict[int, datetime] = {}
+        filas_ultimo = (
+            db.query(Cobro.cliente_id, func.max(Cobro.creado_en))
+            .filter(Cobro.estado == "acreditado")
+            .group_by(Cobro.cliente_id)
+            .all()
+        )
+        for cid, ultima_fecha in filas_ultimo:
+            if ultima_fecha:
+                ultimo_acreditado_en[cid] = ultima_fecha
+
         def _estado_cliente(cid: int) -> str:
             estados = estados_por_cliente.get(cid)
             if not estados:
                 return "sin_cobro"          # nunca se le hizo un cobro
             if "devuelto" in estados:
                 return "contracargo"        # tuvo contracargo/devolución
-            if "acreditado" in estados:
-                return "acreditado"         # se le cobró y se acreditó
-            return "pendiente"              # tiene cobros pero ninguno firme
+            ultima = ultimo_acreditado_en.get(cid)
+            if ultima and ultima >= limite_activo:
+                return "acreditado"         # se le cobró y se acreditó recientemente
+            if ultima:
+                return "inactivo"           # se le acreditó alguna vez, pero no en los últimos 35 días
+            return "pendiente"              # tiene cobros pero ninguno se acreditó nunca
 
         result = []
         for cl in clientes:

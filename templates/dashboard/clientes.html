@@ -199,6 +199,11 @@
             @click="filtroEstado = 'acreditado'">
       <i class="bi bi-check-circle me-1"></i>Cobrados <span class="badge bg-light text-dark ms-1" x-text="conteo.acreditado"></span>
     </button>
+    <button class="btn btn-sm" :class="filtroEstado === 'inactivo' ? 'btn-secondary' : 'btn-outline-secondary'"
+            @click="filtroEstado = 'inactivo'"
+            title="Se le acreditó al menos un cobro alguna vez, pero no en los últimos 35 días">
+      <i class="bi bi-clock-history me-1"></i>Inactivos <span class="badge bg-light text-dark ms-1" x-text="conteo.inactivo"></span>
+    </button>
     <button class="btn btn-sm" :class="filtroEstado === 'contracargo' ? 'btn-danger' : 'btn-outline-danger'"
             @click="filtroEstado = 'contracargo'">
       <i class="bi bi-exclamation-triangle me-1"></i>Contracargos <span class="badge bg-light text-dark ms-1" x-text="conteo.contracargo"></span>
@@ -456,7 +461,7 @@ function clientesApp() {
     },
 
     get conteo() {
-      const c = { todos: this.clientes.length, acreditado: 0, contracargo: 0, sin_cobro: 0, pendiente: 0 };
+      const c = { todos: this.clientes.length, acreditado: 0, inactivo: 0, contracargo: 0, sin_cobro: 0, pendiente: 0 };
       for (const cl of this.clientes) {
         if (c[cl.estado_cobro] !== undefined) c[cl.estado_cobro]++;
       }
@@ -466,6 +471,7 @@ function clientesApp() {
     badgeEstado(estado) {
       switch (estado) {
         case 'acreditado':  return { clase: 'text-bg-success',   label: 'Cobrado' };
+        case 'inactivo':    return { clase: 'text-bg-secondary', label: 'Inactivo' };
         case 'contracargo': return { clase: 'text-bg-danger',    label: 'Contracargo' };
         case 'pendiente':   return { clase: 'text-bg-warning',   label: 'Pendiente' };
         default:            return { clase: 'text-bg-secondary', label: 'Sin cobro' };
