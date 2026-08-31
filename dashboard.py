@@ -1777,18 +1777,29 @@ def api_sincronizar_estados(request: Request):
         por_trans = {str(c.id_transaccion): c.id for c in cobros_pend if c.id_transaccion}
         por_op    = {c.numero_operacion:    c.id for c in cobros_pend if c.numero_operacion}
 
+    # ePagos rechaza rangos de fecha muy anchos ("El rango de fechas supera
+    # el límite permitido"), y ese rechazo no siempre se detecta como error
+    # (el mensaje no contiene la palabra "error"), por lo que la consulta
+    # devolvía 0 resultados en silencio. Se consulta en ventanas de 30 días
+    # para no superar ese límite.
+    TAMANO_VENTANA_DIAS = 30
     ep = _epagos()
     pagos_epagos: list[dict] = []
     try:
-        pagina = 1
-        while True:
-            lote = ep.obtener_pagos(fecha_min, date.today(), estado="A", pagina=pagina)
-            if not lote:
-                break
-            pagos_epagos.extend(lote)
-            if len(lote) < 100:
-                break
-            pagina += 1
+        ventana_desde = fecha_min
+        hoy = date.today()
+        while ventana_desde <= hoy:
+            ventana_hasta = min(ventana_desde + timedelta(days=TAMANO_VENTANA_DIAS - 1), hoy)
+            pagina = 1
+            while True:
+                lote = ep.obtener_pagos(ventana_desde, ventana_hasta, estado="A", pagina=pagina)
+                if not lote:
+                    break
+                pagos_epagos.extend(lote)
+                if len(lote) < 100:
+                    break
+                pagina += 1
+            ventana_desde = ventana_hasta + timedelta(days=1)
     except EpagosError as e:
         return JSONResponse({"error": str(e)}, status_code=500)
     except Exception as exc:
