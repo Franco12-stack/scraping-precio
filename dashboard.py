@@ -45,6 +45,56 @@ _COBROS_JOBS: dict[str, dict] = {}
 _COBROS_JOBS_LOCK = threading.Lock()
 _COBROS_JOBS_MAX = 20  # cuántos jobs terminados se conservan como máximo
 
+# Feriados nacionales y días no laborables de Argentina — se usan para
+# calcular la primera fecha de débito válida (ePagos exige 72 hs hábiles de
+# anticipación, confirmado directamente con ellos, y confirmado también en
+# la práctica: el 9 y el 10 de julio de 2026 fueron rechazados). Esta lista
+# hay que revisarla/actualizarla cada año — no hay una API oficial que la
+# provea, se arma a mano con el calendario publicado por el Gobierno.
+FERIADOS_ARGENTINA = {
+    2026: [
+        date(2026, 1, 1),   # Año Nuevo
+        date(2026, 2, 16),  # Carnaval
+        date(2026, 2, 17),  # Carnaval
+        date(2026, 3, 23),  # Día no laborable (puente)
+        date(2026, 3, 24),  # Día de la Memoria por la Verdad y la Justicia
+        date(2026, 4, 2),   # Día del Veterano y los Caídos en Malvinas
+        date(2026, 4, 3),   # Viernes Santo
+        date(2026, 5, 1),   # Día del Trabajador
+        date(2026, 5, 25),  # Día de la Revolución de Mayo
+        date(2026, 6, 15),  # Paso a la Inmortalidad del Gral. Güemes (trasladado)
+        date(2026, 6, 20),  # Paso a la Inmortalidad del Gral. Belgrano
+        date(2026, 7, 9),   # Día de la Independencia
+        date(2026, 7, 10),  # Día no laborable (puente)
+        date(2026, 8, 17),  # Paso a la Inmortalidad del Gral. San Martín
+        date(2026, 10, 12), # Día del Respeto a la Diversidad Cultural
+        date(2026, 11, 23), # Día de la Soberanía Nacional (trasladado)
+        date(2026, 12, 7),  # Día no laborable (puente)
+        date(2026, 12, 8),  # Inmaculada Concepción de María
+        date(2026, 12, 25), # Navidad
+    ],
+}
+
+
+def _es_habil(d: date) -> bool:
+    """True si `d` es un día hábil bancario: no es sábado/domingo ni feriado."""
+    if d.weekday() >= 5:  # 5=sábado, 6=domingo
+        return False
+    return d not in FERIADOS_ARGENTINA.get(d.year, [])
+
+
+def _fecha_minima_debito(desde: Optional[date] = None, dias_habiles: int = 3) -> date:
+    """Primera fecha hábil válida para un débito, contando `dias_habiles`
+    días hábiles hacia adelante desde `desde` (por defecto hoy) — el
+    equivalente a las 72 hs hábiles de anticipación que exige ePagos."""
+    d = desde or date.today()
+    contados = 0
+    while contados < dias_habiles:
+        d += timedelta(days=1)
+        if _es_habil(d):
+            contados += 1
+    return d
+
 
 # ---------------------------------------------------------------------------
 # Password helpers
@@ -1280,6 +1330,18 @@ def cobros_masivo_page(request: Request):
         "request":  request,
         "clientes": clientes_data,
     })
+
+
+@router.get("/api/cobros/fecha_minima_debito")
+def api_fecha_minima_debito(request: Request):
+    """Primera fecha de débito válida (72 hs hábiles desde hoy, saltando
+    fines de semana y feriados). El frontend la usa para completar la
+    fecha de débito automáticamente en vez de dejarla vacía."""
+    err = _api_require_auth(request)
+    if err:
+        return err
+    fecha = _fecha_minima_debito()
+    return {"fecha_minima": fecha.isoformat()}
 
 
 @router.post("/api/cobros/masivo")

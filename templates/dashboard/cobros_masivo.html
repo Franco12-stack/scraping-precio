@@ -51,14 +51,14 @@
         <div class="col-md-2">
           <label class="form-label small fw-semibold">Fecha de débito</label>
           <input x-model="config.fecha_debito" type="date" class="form-control"
-                 :min="hoy"
+                 :min="fechaMinima || hoy"
                  x-show="config.tipo === 'inmediato'"
-                 :title="'Fecha en que ePagos intentará el débito. Mínimo mañana (' + manana + ')'">
+                 :title="'Fecha en que ePagos intentará el débito. Mínimo ' + (fechaMinima || '...') + ' (72 hs hábiles)'">
           <input x-model="config.fecha_cobro" type="date" class="form-control"
                  :min="hoy"
                  x-show="config.tipo === 'programado'">
           <div class="form-text" x-show="config.tipo === 'inmediato'">
-            Dejá vacío para mañana por defecto.
+            <span x-show="fechaMinima">Se completó con la primera fecha válida (72 hs hábiles).</span>
           </div>
         </div>
         <div class="col-md-2">
@@ -277,6 +277,7 @@ function masivosApp() {
   return {
     hoy:    new Date().toISOString().split('T')[0],
     manana: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+    fechaMinima: '',   // primera fecha de débito válida (72hs hábiles), la calcula el servidor
     config: { importe: '1900', tipo: 'inmediato', fecha_cobro: '', fecha_debito: '', descripcion: 'fundcolab' },
     conCBU: [],
     sinCBU: [],
@@ -321,6 +322,18 @@ function masivosApp() {
       });
       this.cargarFallidos();
       this._retomarJobEnCurso();
+      this.cargarFechaMinima();
+    },
+
+    async cargarFechaMinima() {
+      try {
+        const res = await fetch('/api/cobros/fecha_minima_debito');
+        if (res.ok) {
+          const d = await res.json();
+          this.fechaMinima = d.fecha_minima;
+          if (!this.config.fecha_debito) this.config.fecha_debito = d.fecha_minima;
+        }
+      } catch (e) {}
     },
 
     // Si había un lote corriendo cuando se cerró/recargó la pestaña, lo
@@ -416,6 +429,12 @@ function masivosApp() {
       if (this.config.tipo === 'programado' && !this.config.fecha_cobro) {
         showToast('Elegí una fecha de cobro para el tipo programado', 'error'); return;
       }
+
+      const fecha = this.config.tipo === 'programado' ? this.config.fecha_cobro : this.config.fecha_debito;
+      if (!confirm(
+        `¿Confirmás el cobro de ${sel.length} cliente(s) por un total de $${this.fmtMonto(this.totalImporte)}` +
+        (fecha ? ` con fecha de débito ${fecha}?` : '?')
+      )) return;
 
       this.ejecutando     = true;
       this.progreso       = 0;
